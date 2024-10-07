@@ -244,21 +244,43 @@ def enviar_emails(lista)
 
     anexo =  gerar_excel(lista)
     if show_list
-      enviar_email("Datasync: Lojas com diferenças",'Olá, boa tarde<br> Segue lojas que estão com diferenças entre Retaguarda e Loja em anexo:<br>',
-                   "Segue as lojas que não foram possiveis de fazer a verificação automática:<br><br> #{show_list}", anexo,
-                   'Essas lojas que não conseguimos conectar, podem ou não acrescentar na diferença de vendas, só vamos conseguir validar quando o
-problema for resolvido ou a loja abrir e ligar os terminais caso seja uma loja de fuso horário diferente')
+      enviar_email(
+        "Datasync: Lojas com diferenças",
+        "Lojas com diferenças:<br>",
+        "<p class='big-bold'> Segue as lojas que não foram possíveis de fazer a verificação automática:</p>",
+        show_list,
+        nil,
+        "<h1>Possíveis Diferenças nas Vendas!</h1>
+<p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática. Essas diferenças serão validadas somente após:</p>
+<table border='1' cellpadding='5' cellspacing='0' style='width: 100%; margin-top: 10px;'>
+  <tr>
+    <td style='text-align: center; vertical-align: middle;'>Abertura das lojas e reativação dos terminais, especialmente se estiverem em fusos horários diferentes.</td>
+  </tr>
+</table>"
+      )
     else
       enviar_email("Datasync: Lojas com diferenças",'Olá, boa tarde<br> Segue lojas que estão com diferenças entre Retaguarda e Loja em anexo:<br>',
-                   "Nenhuma loja deu erro na conexão!", anexo)
+                   "<p class='big-bold'><center>Nenhuma loja deu erro na conexão!</center><p>", anexo)
       end
   else
     if show_list
-      enviar_email("Datasync: Lojas sem diferenças",'Valores Lojas X Retaguarda estão certos:<br>',"Segue as lojas que não foram possiveis de fazer a verificação automática:<br><br> #{show_list}",nil,
-                   'Essas lojas que não conseguimos conectar, podem ou não acrescentar na diferença de vendas, só vamos conseguir validar quando o
-problema for resolvido ou a loja abrir e ligar os terminais caso seja uma loja de fuso horário diferente')
+      enviar_email(
+        "Datasync: Lojas sem diferenças",
+        "Valores Lojas X Retaguarda estão Corretos, exceto as filiais abaixo:<br>",
+        "<p class='big-bold'>Segue as lojas que não foram possíveis de fazer a verificação automática:<p><br>",
+        show_list,
+        nil,
+        "<h1>Possíveis Diferenças nas Vendas!</h1>
+<p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática.Essas diferenças serão validadas somente após:</p>
+<table border='1' cellpadding='5' cellspacing='0' style='width: 100%; margin-top: 10px;'>
+  <tr>
+    <td style='text-align: center; vertical-align: middle;'>Abertura das lojas e reativação dos terminais, especialmente se estiverem em fusos horários diferentes.</td>
+  </tr>
+</table>"
+      )
     else
-      enviar_email("Datasync: Lojas sem diferenças",'Valores Lojas X Retaguarda estão corretos:<br>',"Nenhuma loja deu erro na conexão!",nil)
+      enviar_email("Datasync: Lojas sem diferenças",'Valores Lojas X Retaguarda estão corretos:<br>',
+                   "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>",nil)
     end
   end
 end
