@@ -4,6 +4,7 @@ require 'yaml'
 require 'time'
 require_relative 'enviar_email'
 require_relative 'gerar_excel'
+require 'date'
 
 
 class Config
@@ -83,61 +84,85 @@ class Config
     lojas_para_email = []
     lojas_valores = []
     ret_valores = []
-    if script_permitido?(script)
-      executar_banco_lite(script) do |rows|
-        rows.each do |row|
-          ip = row[0]
-          cod_filial = row[1]
-          filial = row[2]
-          client_loja = conectar_banco_server_loja(ip,cod_filial,filial)
-          if client_loja
-            executar_banco_server(client_loja,"select sum(valor_pago) from LOJA_VENDA where DATA_VENDA='#{formatar_data}'",filial,cod_filial) do |linhas|
-              linhas.each do |roww|
-                hash = roww
-                valor = hash[""]
-                if valor
-                  valor_formatado = sprintf("%.2f",valor)
-                  puts "valor na loja: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
-                  lojas_valores << [valor_formatado, cod_filial, filial]
-                else
-                  add_list("#{filial} - (#{cod_filial.to_s.rjust(6,'0')})")
+    if verifica_horario
+
+
+      if script_permitido?(script)
+        executar_banco_lite(script) do |rows|
+          rows.each do |row|
+            ip = row[0]
+            cod_filial = row[1]
+            filial = row[2]
+            client_loja = conectar_banco_server_loja(ip,cod_filial,filial)
+            if client_loja
+              executar_banco_server(client_loja,"select sum(valor_pago) from LOJA_VENDA where DATA_VENDA='#{formatar_data}'",filial,cod_filial) do |linhas|
+                linhas.each do |roww|
+                  hash = roww
+                  valor = hash[""]
+                  if valor
+                    valor_formatado = sprintf("%.2f",valor)
+                    puts "valor na loja: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
+                    lojas_valores << [valor_formatado, cod_filial, filial]
+                  else
+                    add_list("#{filial} - (#{cod_filial.to_s.rjust(6,'0')})")
+                  end
+                end
+              rescue TinyTds::Error, SQLException::Exception
+                add_list("#{filial} - (#{cod_filial.to_s.rjust(6,'0')})")
+              ensure
+                fecha_conexao_server(client_loja)
+              end
+            else
+              puts "Não foi possivel estabelecer comunicação"
+            end
+            client_ret = conectar_banco_server_ret
+            if client_ret
+              executar_banco_server(client_ret,"SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{formatar_data}' AND CODIGO_FILIAL='#{cod_filial.to_s.rjust(6,'0')}'",filial, cod_filial) do |ret|
+                ret.each do |valor_ret|
+                  hash = valor_ret
+                  valor = hash[""]
+                  if valor
+                    valor_formatado = sprintf("%.2f",valor)
+                    puts "valor na retaguarda: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
+                    ret_valores << [valor_formatado, cod_filial]
+                  end
                 end
               end
-            rescue TinyTds::Error, SQLException::Exception
-              add_list("#{filial} - (#{cod_filial.to_s.rjust(6,'0')})")
-            ensure
-              fecha_conexao_server(client_loja)
+            else
+              puts "Não foi possivel achar a loja"
             end
-          else
-            puts "Não foi possivel estabelecer comunicação"
           end
-          client_ret = conectar_banco_server_ret
-          if client_ret
-            executar_banco_server(client_ret,"SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{formatar_data}' AND CODIGO_FILIAL='#{cod_filial.to_s.rjust(6,'0')}'",filial, cod_filial) do |ret|
-              ret.each do |valor_ret|
-                hash = valor_ret
-                valor = hash[""]
-                if valor
-                  valor_formatado = sprintf("%.2f",valor)
-                  puts "valor na retaguarda: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
-                  ret_valores << [valor_formatado, cod_filial]
-                end
-              end
-            end
-          else
-            puts "Não foi possivel achar a loja"
+          fechar_conexao_lite
+          if comparar_valores(lojas_valores,ret_valores).each do |loja, retaguarda, cod_filial, filial|
+            lojas_para_email << ["#{filial} (#{cod_filial.to_s.rjust(6,'0')})",loja, loja.to_f-retaguarda.to_f, retaguarda]
+          end
           end
         end
-        fechar_conexao_lite
-        if comparar_valores(lojas_valores,ret_valores).each do |loja, retaguarda, cod_filial, filial|
-          lojas_para_email << ["#{filial} (#{cod_filial.to_s.rjust(6,'0')})",loja, loja.to_f-retaguarda.to_f, retaguarda]
-        end
-        end
+      else
+        puts "Script não permitido"
+      end
+      enviar_emails(lojas_para_email)
+    end
+  end
+
+  def verifica_horario
+    horario = Time.now
+    data = Date.today
+    if data.sunday?
+      if horario.hour >=13 and horario.hour <=21
+        true
+      else
+        puts "Fora de horário de funcionamento"
+        false
       end
     else
-      puts "Script não permitido"
+      if horario.hour >=9 and horario.hour <=23
+        true
+      else
+        puts "Fora de horário de funcionamento"
+        false
+      end
     end
-    enviar_emails(lojas_para_email)
   end
 
   def rodar_script_update(script)
@@ -174,8 +199,6 @@ class Config
       puts "Script não permitido"
     end
   end
-
-
   private
   def executar_banco_lite(script)
     if script_permitido?(script)
@@ -261,7 +284,7 @@ def enviar_emails(lista)
     else
       enviar_email("Datasync: Lojas com diferenças",'Olá, boa tarde<br> Segue lojas que estão com diferenças entre Retaguarda e Loja em anexo:<br>',
                    "<p class='big-bold'><center>Nenhuma loja deu erro na conexão!</center><p>", anexo)
-      end
+    end
   else
     if show_list
       enviar_email(
