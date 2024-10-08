@@ -4,12 +4,14 @@ require 'yaml'
 require 'time'
 require_relative 'enviar_email'
 require_relative 'gerar_excel'
+require_relative 'util'
 require 'date'
 
 
 class Config
   include EnviarEmail
   include GerarExcel
+  include Util
   def initialize(db=nil)
     @db=db
     conectar_banco_lite
@@ -80,87 +82,92 @@ class Config
   end
 
   public
-  def datasync(script)
-    lojas_para_email = []
-    lojas_valores = []
-    ret_valores = []
-    if verifica_horario
+    def datasync(script)
+      lojas_para_email = []
+      lojas_valores = []
+      ret_valores = []
+      if verifica_horario
+        if script_permitido?(script)
+          executar_banco_lite(script) do |rows|
+            rows.each do |row|
+              ip = row[0]
+              cod_filial = row[1]
+              filial = row[2]
+              client_loja = conectar_banco_server_loja(ip,cod_filial,filial)
+              if client_loja
+                executar_banco_server(client_loja,"select sum(valor_pago) from LOJA_VENDA where DATA_VENDA='#{formatar_data}'",filial,cod_filial) do |linhas|
+                  linhas.each do |roww|
+                    hash = roww
+                    valor = hash[""]
+                    if valor
+                      valor_formatado = sprintf("%.2f",valor)
+                      puts "valor na loja: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
+                      lojas_valores << [valor_formatado, cod_filial, filial]
+                    end
+                  end
+                rescue TinyTds::Error, SQLException::Exception
+                  add_list("#{filial} - (#{cod_filial.to_s.rjust(6,'0')})")
+                ensure
+                  fecha_conexao_server(client_loja)
+                end
+              else
+                puts "Não foi possivel estabelecer comunicação"
+              end
+              client_ret = conectar_banco_server_ret
+              if client_ret
+                executar_banco_server(client_ret,"SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{formatar_data}' AND CODIGO_FILIAL='#{cod_filial.to_s.rjust(6,'0')}'",filial, cod_filial) do |ret|
+                  ret.each do |valor_ret|
+                    hash = valor_ret
+                    valor = hash[""]
+                    if valor
+                      valor_formatado = sprintf("%.2f",valor)
+                      puts "valor na retaguarda: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
+                      ret_valores << [valor_formatado, cod_filial]
+                    end
+                  end
+                end
+              else
+                puts "Não foi possivel achar a loja"
+              end
+            end
+            fechar_conexao_lite
+            if comparar_valores(lojas_valores,ret_valores).each do |loja, retaguarda, cod_filial, filial|
+              lojas_para_email << ["#{filial} (#{cod_filial.to_s.rjust(6,'0')})",loja, loja.to_f-retaguarda.to_f, retaguarda]
+            end
+            end
+          end
+        else
+          puts "Script não permitido"
+        end
+        enviar_emails(lojas_para_email)
+      end
+    end
 
-
+  def consulta_caixa_lancamento(list)
+    qtd_abertura = []
+    qtd_fechamento = []
+    if list
+      filial = list.split(" ")
+      cod_filial = list.slice(/\(([^)]+)\)/, 1) #extrai os parenteses do (codigo filial)
+      client = conectar_banco_server_ret
+      script = "SELECT TIPO_LANCAMENTO_CAIXA FROM LOJA_CAIXA_LANCAMENTOS WHERE CODIGO_FILIAL='#{cod_filial}' AND DATA='#{formatar_data}'"
       if script_permitido?(script)
-        executar_banco_lite(script) do |rows|
-          rows.each do |row|
-            ip = row[0]
-            cod_filial = row[1]
-            filial = row[2]
-            client_loja = conectar_banco_server_loja(ip,cod_filial,filial)
-            if client_loja
-              executar_banco_server(client_loja,"select sum(valor_pago) from LOJA_VENDA where DATA_VENDA='#{formatar_data}'",filial,cod_filial) do |linhas|
-                linhas.each do |roww|
-                  hash = roww
-                  valor = hash[""]
-                  if valor
-                    valor_formatado = sprintf("%.2f",valor)
-                    puts "valor na loja: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
-                    lojas_valores << [valor_formatado, cod_filial, filial]
-                  else
-                    add_list("#{filial} - (#{cod_filial.to_s.rjust(6,'0')})")
-                  end
-                end
-              rescue TinyTds::Error, SQLException::Exception
-                add_list("#{filial} - (#{cod_filial.to_s.rjust(6,'0')})")
-              ensure
-                fecha_conexao_server(client_loja)
-              end
-            else
-              puts "Não foi possivel estabelecer comunicação"
-            end
-            client_ret = conectar_banco_server_ret
-            if client_ret
-              executar_banco_server(client_ret,"SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{formatar_data}' AND CODIGO_FILIAL='#{cod_filial.to_s.rjust(6,'0')}'",filial, cod_filial) do |ret|
-                ret.each do |valor_ret|
-                  hash = valor_ret
-                  valor = hash[""]
-                  if valor
-                    valor_formatado = sprintf("%.2f",valor)
-                    puts "valor na retaguarda: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
-                    ret_valores << [valor_formatado, cod_filial]
-                  end
-                end
-              end
-            else
-              puts "Não foi possivel achar a loja"
-            end
-          end
-          fechar_conexao_lite
-          if comparar_valores(lojas_valores,ret_valores).each do |loja, retaguarda, cod_filial, filial|
-            lojas_para_email << ["#{filial} (#{cod_filial.to_s.rjust(6,'0')})",loja, loja.to_f-retaguarda.to_f, retaguarda]
-          end
+        executar_banco_server(client,script) do |linhas|
+          linhas.each do |row|
+            hash = row
+            valor = hash["TIPO_LANCAMENTO_CAIXA"]
+            qtd_abertura << valor if valor == '00'
+            qtd_fechamento << valor if valor == '99'
           end
         end
-      else
-        puts "Script não permitido"
-      end
-      enviar_emails(lojas_para_email)
-    end
-  end
-
-  def verifica_horario
-    horario = Time.now
-    data = Date.today
-    if data.sunday?
-      if horario.hour >=13 and horario.hour <=21
-        true
-      else
-        puts "Fora de horário de funcionamento"
-        false
-      end
-    else
-      if horario.hour >=9 and horario.hour <=23
-        true
-      else
-        puts "Fora de horário de funcionamento"
-        false
+        if qtd_fechamento and qtd_fechamento != []
+          if qtd_abertura.length != qtd_fechamento.length
+          else
+            nil
+          end
+        else
+          return "#{filial[0]}  (#{cod_filial})"
+        end
       end
     end
   end
@@ -199,6 +206,7 @@ class Config
       puts "Script não permitido"
     end
   end
+
   private
   def executar_banco_lite(script)
     if script_permitido?(script)
@@ -207,20 +215,18 @@ class Config
     end
   end
 
-  def executar_banco_server(client,script,filial,cod_filial)
+  def executar_banco_server(client,script,filial=nil,cod_filial=nil)
     begin
       if client
         if script_permitido?(script)
           row = client.execute(script)
           yield(row) if block_given?
         end
-      else
       end
     rescue TinyTds::Error, SQLException::Exception
       add_list("Erro na conexão ou execução na loja:<br> #{filial} (#{cod_filial.to_s.rjust(6, '0')})")
     end
   end
-
 
   private
   def script_permitido?(script)
@@ -234,76 +240,4 @@ class Config
     YAML.load_file(config_path)
   end
 
-  def add_list(model)
-    @lojas_erro ||= []
-    @lojas_erro << model
-  end
-
-  def show_list
-    if @lojas_erro
-      @lojas_erro.join('<br>')
-    end
-  end
-end
-
-def formatar_data
-  (Date.today - 1).strftime("%y%m%d")
-end
-
-
-def comparar_valores(lojas_valores, ret_valores)
-  resultado = []
-  lojas_valores.each do |valor_loja, cod_filial, filial|
-    valor_ret = ret_valores.find { |cod_ret| cod_ret == cod_filial }&.first
-    if valor_ret == valor_loja
-      resultado << [valor_loja, valor_ret || 0, cod_filial, filial]
-    end
-  end
-  resultado
-end
-
-def enviar_emails(lista)
-  if lista.any?
-
-    anexo =  gerar_excel(lista)
-    if show_list
-      enviar_email(
-        "Datasync: Lojas com diferenças",
-        "Lojas com diferenças:<br>",
-        "<p class='big-bold'> Segue as lojas que não foram possíveis de fazer a verificação automática:</p>",
-        show_list,
-        nil,
-        "<h1>Possíveis Diferenças nas Vendas!</h1>
-<p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática. Essas diferenças serão validadas somente após:</p>
-<table border='1' cellpadding='5' cellspacing='0' style='width: 100%; margin-top: 10px;'>
-  <tr>
-    <td style='text-align: center; vertical-align: middle;'>Abertura das lojas e reativação dos terminais, especialmente se estiverem em fusos horários diferentes.</td>
-  </tr>
-</table>"
-      )
-    else
-      enviar_email("Datasync: Lojas com diferenças",'Olá, boa tarde<br> Segue lojas que estão com diferenças entre Retaguarda e Loja em anexo:<br>',
-                   "<p class='big-bold'><center>Nenhuma loja deu erro na conexão!</center><p>", anexo)
-    end
-  else
-    if show_list
-      enviar_email(
-        "Datasync: Lojas sem diferenças",
-        "Valores Lojas X Retaguarda estão Corretos, exceto as filiais abaixo:<br>",
-        "<p class='big-bold'>Segue as lojas que não foram possíveis de fazer a verificação automática:<p><br>",
-        show_list,
-        nil,
-        "<h1>Possíveis Diferenças nas Vendas!</h1>
-<p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática.Essas diferenças serão validadas somente após:</p>
-<table border='1' cellpadding='5' cellspacing='0' style='width: 100%; margin-top: 10px;'>
-  <tr>
-    <td style='text-align: center; vertical-align: middle;'>Abertura das lojas e reativação dos terminais, especialmente se estiverem em fusos horários diferentes.</td>
-  </tr>
-</table>"
-      )
-    else
-      enviar_email("Datasync: Lojas sem diferenças",'Valores Lojas X Retaguarda estão corretos:<br>',
-                   "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>",nil)
-    end
-  end
 end
