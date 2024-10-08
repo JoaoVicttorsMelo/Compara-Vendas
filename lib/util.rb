@@ -1,3 +1,7 @@
+require 'time'
+require 'date'
+
+
 module Util
 
   def verifica_horario

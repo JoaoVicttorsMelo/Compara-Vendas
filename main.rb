@@ -1,7 +1,9 @@
-require_relative 'config'
+require_relative 'classes/services'
 require 'yaml'
 
-config_path = File.join(__dir__, 'config.yml')
+
+config_path = File.expand_path('config.yml', __dir__)
 config = YAML.load_file(config_path)
-obj = Config.new(config['database']['db'])
+obj = Services.new(config['database']['db'])
+
 obj.datasync("SELECT ip, cod_filial, filial FROM filiais_ip where servidor=1 order by cod_filial")

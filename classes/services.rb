@@ -1,14 +1,13 @@
 require 'sqlite3'
 require 'tiny_tds'
 require 'yaml'
-require 'time'
-require_relative 'enviar_email'
-require_relative 'gerar_excel'
-require_relative 'util'
-require 'date'
+
+require_relative File.join(__dir__, '..', 'lib', 'util')
+require_relative File.join(__dir__, '..', 'lib', 'enviar_email')
+require_relative File.join(__dir__, '..', 'lib', 'gerar_excel')
 
 
-class Config
+class Services
   include EnviarEmail
   include GerarExcel
   include Util
@@ -36,7 +35,7 @@ class Config
         database: cod_filial == 102 ? config["database_server"]["database"][1] : config["database_server"]["database"][0],
         port: 1433
       )
-    rescue TinyTds::Error, SQLException::Exception
+    rescue TinyTds::Error
       add_list("#{filial} - (#{cod_filial.to_s.rjust(6,'0')})")
       false
     end
@@ -235,8 +234,9 @@ class Config
     scripts_permitidos.any? { |palavra| script.downcase.include?(palavra) }
   end
 
+  public
   def conectar_yml
-    config_path= File.join(__dir__, 'config.yml')
+    config_path = File.expand_path('../config.yml', __dir__)
     YAML.load_file(config_path)
   end
 
