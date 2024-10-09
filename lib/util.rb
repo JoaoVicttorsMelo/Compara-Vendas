@@ -1,8 +1,16 @@
 require 'time'
 require 'date'
+require_relative File.join(__dir__, '..', 'lib', 'enviar_email')
+require_relative File.join(__dir__, '..', 'lib', 'gerar_excel')
+
+
+
+
 
 
 module Util
+  include EnviarEmail
+  include GerarExcel
 
   def verifica_horario
     horario = Time.now
@@ -15,7 +23,7 @@ module Util
         false
       end
     else
-      if horario.hour >=9 and horario.hour <=23
+      if horario.hour >=8 and horario.hour <=23
         true
       else
         puts "Fora de horário de funcionamento"
@@ -24,18 +32,24 @@ module Util
     end
   end
 
-  def add_list(model)
+  def add_list(model=[])
     @lojas_erro ||= []
     @lojas_erro << model
   end
 
-  def show_list
+  def show_list(as_string = false)
     if @lojas_erro
-      @lojas_erro.join('<br>')
+      if as_string
+        @lojas_erro.join('<br>')
+      else
+        @lojas_erro
+      end
     end
   end
   def formatar_data
-    (Date.today -1 ).strftime("%y%m%d")
+    require 'date'
+    data = Date.today - 1
+    data.strftime("%Y%m%d")
   end
 
   def comparar_valores(lojas_valores, ret_valores)
@@ -52,12 +66,14 @@ module Util
   def enviar_emails(lista)
     if lista.any?
       anexo =  gerar_excel(lista)
-      if show_list
+      lojas_erro = show_list(false)
+      resultado_consulta = consulta_caixa_lancamento(lojas_erro)
+      if resultado_consulta.any?
         enviar_email(
           "Datasync: Lojas com diferenças",
           "Lojas com diferenças:<br>",
           "<p class='big-bold'> Segue as lojas que não foram possíveis de fazer a verificação automática:</p>",
-          consulta_caixa_lancamento(show_list),
+          resultado_consulta,
           nil,
           "<h1>Possíveis Diferenças nas Vendas!</h1>
   <p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática. Essas diferenças serão validadas somente após:</p>
@@ -72,12 +88,14 @@ module Util
                      "<p class='big-bold'><center>Nenhuma loja deu erro na conexão!</center><p>", anexo)
       end
     else
-      if show_list
+      lojas_erro = show_list(false)
+      resultado_consulta = consulta_caixa_lancamento(lojas_erro)
+      if resultado_consulta.any?
         enviar_email(
           "Datasync: Lojas sem diferenças",
           "Valores Lojas X Retaguarda estão Corretos, exceto as filiais abaixo:<br>",
           "<p class='big-bold'>Segue as lojas que não foram possíveis de fazer a verificação automática:<p><br>",
-          consulta_caixa_lancamento(show_list),
+          resultado_consulta,
           nil,
           "<h1>Possíveis Diferenças nas Vendas!</h1>
   <p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática.Essas diferenças serão validadas somente após:</p>

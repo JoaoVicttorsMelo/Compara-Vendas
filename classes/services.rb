@@ -3,13 +3,7 @@ require 'tiny_tds'
 require 'yaml'
 
 require_relative File.join(__dir__, '..', 'lib', 'util')
-require_relative File.join(__dir__, '..', 'lib', 'enviar_email')
-require_relative File.join(__dir__, '..', 'lib', 'gerar_excel')
-
-
 class Services
-  include EnviarEmail
-  include GerarExcel
   include Util
   def initialize(db=nil)
     @db=db
@@ -36,7 +30,7 @@ class Services
         port: 1433
       )
     rescue TinyTds::Error
-      add_list("#{filial} - (#{cod_filial.to_s.rjust(6,'0')})")
+      add_list([filial, cod_filial.to_s.rjust(6, '0')])
       false
     end
   end
@@ -52,8 +46,8 @@ class Services
         database: config["database_ret"]["database"],
         port: 1433
       )
-    rescue TinyTds::Error, SQLException::Exception
-      add_list("Erro na conexão com o banco retaguarda")
+    rescue TinyTds::Error
+      add_list([filial, cod_filial.to_s.rjust(6, '0')])
       false
     end
   end
@@ -90,11 +84,11 @@ class Services
           executar_banco_lite(script) do |rows|
             rows.each do |row|
               ip = row[0]
-              cod_filial = row[1]
+              cod_filial = row[1].to_s.rjust(6,'0')
               filial = row[2]
               client_loja = conectar_banco_server_loja(ip,cod_filial,filial)
               if client_loja
-                executar_banco_server(client_loja,"select sum(valor_pago) from LOJA_VENDA where DATA_VENDA='#{formatar_data}'",filial,cod_filial) do |linhas|
+                executar_banco_server(client_loja,"select sum(valor_pago) from LOJA_VENDA where DATA_VENDA='#{formatar_data}'") do |linhas|
                   linhas.each do |roww|
                     hash = roww
                     valor = hash[""]
@@ -102,10 +96,12 @@ class Services
                       valor_formatado = sprintf("%.2f",valor)
                       puts "valor na loja: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
                       lojas_valores << [valor_formatado, cod_filial, filial]
+                    else
+                      puts "Filial #{filial} (#{cod_filial}) sem venda"
                     end
                   end
                 rescue TinyTds::Error, SQLException::Exception
-                  add_list("#{filial} - (#{cod_filial.to_s.rjust(6,'0')})")
+                  add_list([filial, cod_filial.to_s.rjust(6, '0')])
                 ensure
                   fecha_conexao_server(client_loja)
                 end
@@ -114,7 +110,7 @@ class Services
               end
               client_ret = conectar_banco_server_ret
               if client_ret
-                executar_banco_server(client_ret,"SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{formatar_data}' AND CODIGO_FILIAL='#{cod_filial.to_s.rjust(6,'0')}'",filial, cod_filial) do |ret|
+                executar_banco_server(client_ret,"SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{formatar_data}' AND CODIGO_FILIAL='#{cod_filial.to_s.rjust(6,'0')}'") do |ret|
                   ret.each do |valor_ret|
                     hash = valor_ret
                     valor = hash[""]
@@ -142,33 +138,36 @@ class Services
       end
     end
 
-  def consulta_caixa_lancamento(list)
+  def processar_loja(list)
     qtd_abertura = []
     qtd_fechamento = []
     if list
-      filial = list.split(" ")
-      cod_filial = list.slice(/\(([^)]+)\)/, 1) #extrai os parenteses do (codigo filial)
+      filial, cod_filial = list
       client = conectar_banco_server_ret
-      script = "SELECT TIPO_LANCAMENTO_CAIXA FROM LOJA_CAIXA_LANCAMENTOS WHERE CODIGO_FILIAL='#{cod_filial}' AND DATA='#{formatar_data}'"
+      script = "SELECT TIPO_LANCAMENTO_CAIXA FROM LOJA_CAIXA_LANCAMENTOS WHERE CODIGO_FILIAL='#{cod_filial}' AND DATA='#{formatar_data}' AND TIPO_LANCAMENTO_CAIXA in ('00','99')"
       if script_permitido?(script)
-        executar_banco_server(client,script) do |linhas|
+        executar_banco_server(client, script) do |linhas|
           linhas.each do |row|
-            hash = row
-            valor = hash["TIPO_LANCAMENTO_CAIXA"]
+            valor = row["TIPO_LANCAMENTO_CAIXA"]
             qtd_abertura << valor if valor == '00'
             qtd_fechamento << valor if valor == '99'
           end
         end
-        if qtd_fechamento and qtd_fechamento != []
-          if qtd_abertura.length != qtd_fechamento.length
-          else
-            nil
-          end
-        else
-          return "#{filial[0]}  (#{cod_filial})"
+        if qtd_abertura.length != qtd_fechamento.length
+          return "#{filial} (#{cod_filial})"
         end
       end
     end
+  end
+
+  def consulta_caixa_lancamento(lista_de_lojas)
+    resultados = []
+    lista_de_lojas.each do |list|
+      resultado = processar_loja(list)
+      resultados << resultado if resultado
+      puts resultado
+    end
+    resultados
   end
 
   def rodar_script_update(script)
@@ -194,7 +193,7 @@ class Services
               puts "Não foi possivel fazer a conexão"
             end
           rescue TinyTds::Error, SQLException::Exception
-            add_list("Erro na conexão ou execução na loja:<br> #{filial} (#{cod_filial.to_s.rjust(6, '0')})")
+            add_list([filial, cod_filial.to_s.rjust(6, '0')])
           ensure
             fecha_conexao_server(cliente)
           end
@@ -214,17 +213,13 @@ class Services
     end
   end
 
-  def executar_banco_server(client,script,filial=nil,cod_filial=nil)
-    begin
+  def executar_banco_server(client,script)
       if client
         if script_permitido?(script)
           row = client.execute(script)
           yield(row) if block_given?
         end
       end
-    rescue TinyTds::Error, SQLException::Exception
-      add_list("Erro na conexão ou execução na loja:<br> #{filial} (#{cod_filial.to_s.rjust(6, '0')})")
-    end
   end
 
   private
@@ -236,8 +231,7 @@ class Services
 
   public
   def conectar_yml
-    config_path = File.expand_path('../config.yml', __dir__)
+    config_path = File.expand_path('../../Atualizar_Lojas/lib/config.yml', __dir__)
     YAML.load_file(config_path)
   end
-
 end

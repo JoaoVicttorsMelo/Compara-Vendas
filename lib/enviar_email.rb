@@ -27,12 +27,11 @@ module EnviarEmail
 
     # Gerar as linhas da tabela a partir de 'informacao'
     if informacao != nil
-      informacao_array = informacao.split('<br>')
+      informacao_array = informacao.is_a?(Array) ? informacao : informacao.split('<br>')
       table_rows = informacao_array.map do |item|
         "<tr><td style='text-align: center; vertical-align: middle;'>#{item}</td></tr>"
       end.join("\n")
     end
-
 
     # Criando o e-mail com estilo e prioridade
     mail = Mail.new do
