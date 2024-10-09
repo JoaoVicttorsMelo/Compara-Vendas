@@ -38,12 +38,11 @@ module Util
   end
 
   def show_list(as_string = false)
-    if @lojas_erro
-      if as_string
-        @lojas_erro.join('<br>')
-      else
-        @lojas_erro
-      end
+    @lojas_erro ||= []
+    if as_string
+      @lojas_erro.join('<br>')
+    else
+      @lojas_erro
     end
   end
   def formatar_data
@@ -54,10 +53,16 @@ module Util
 
   def comparar_valores(lojas_valores, ret_valores)
     resultado = []
-    lojas_valores.each do |valor_loja, cod_filial, filial|
-      valor_ret = ret_valores.find { |cod_ret| cod_ret == cod_filial }&.first
-      if valor_ret == valor_loja
-        resultado << [valor_loja, valor_ret || 0, cod_filial, filial]
+    lojas_valores.each do |valor_loja, cod_filial, filial, ip|
+      ret_entry = ret_valores.find { |valor_ret, cod_ret| cod_ret == cod_filial }
+      if ret_entry
+        valor_ret, _cod_ret = ret_entry
+        if valor_loja != valor_ret
+          resultado << [valor_loja, valor_ret, cod_filial, filial, ip]
+        end
+      else
+        # Se o valor na retaguarda não for encontrado, considere como discrepância
+        resultado << [valor_loja, nil, cod_filial, filial, ip]
       end
     end
     resultado
@@ -67,7 +72,9 @@ module Util
     if lista.any?
       anexo =  gerar_excel(lista)
       lojas_erro = show_list(false)
-      resultado_consulta = consulta_caixa_lancamento(lojas_erro)
+      unless lojas_erro.empty?
+        resultado_consulta = consulta_caixa_lancamento(lojas_erro)
+      end
       if resultado_consulta.any?
         enviar_email(
           "Datasync: Lojas com diferenças",
