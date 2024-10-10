@@ -2,6 +2,8 @@ require 'sqlite3'
 require 'tiny_tds'
 require 'yaml'
 require 'logger'
+require 'fileutils'
+
 
 require_relative File.join(__dir__, '..', 'lib', 'util')
 class Services
@@ -15,21 +17,36 @@ class Services
 
   private
   def setup_logger
-    # Determina o caminho base do projeto
     project_root = File.expand_path(File.join(__dir__, '..'))
     log_dir = File.join(project_root, 'log')
-    log_file = File.join(log_dir, 'database.log')
+    @log_file = File.join(log_dir, 'database.log')
 
-    # Cria o diretório se ele não existir
-    FileUtils.mkdir_p(log_dir) unless File.directory?(log_dir)
+    ensure_log_file_exists
 
-    @logger.info "Criando log em: #{log_file}"  # Debug: mostra onde o log será criado
-
-    @logger = Logger.new(log_file)
+    @logger = Logger.new(@log_file)
     @logger.level = Logger::INFO
-  rescue StandardError
+
+    # Teste inicial do logger
+    @logger.info("Logger iniciado com sucesso")
+  rescue StandardError => e
+    puts "Erro ao configurar logger: #{e.message}"
+    puts "Stacktrace: #{e.backtrace.join("\n")}"
     @logger = Logger.new(STDOUT)
   end
+
+  def ensure_log_file_exists
+    FileUtils.mkdir_p(File.dirname(@log_file))
+
+    unless File.exist?(@log_file)
+      FileUtils.touch(@log_file)
+    end
+
+    # Verifica se o arquivo é gravável
+    unless File.writable?(@log_file)
+      raise "Arquivo de log não é gravável: #{@log_file}"
+    end
+  end
+
 
   def conectar_banco_lite
     @db = SQLite3::Database.new @db
