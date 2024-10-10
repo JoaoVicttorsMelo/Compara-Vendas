@@ -81,7 +81,7 @@ module Util
           "Lojas com diferenças:<br>",
           "<p class='big-bold'> Segue as lojas que não foram possíveis de fazer a verificação automática:</p>",
           resultado_consulta,
-          nil,
+          anexo,
           "<h1>Possíveis Diferenças nas Vendas!</h1>
   <p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática. Essas diferenças serão validadas somente após:</p>
   <table border='1' cellpadding='5' cellspacing='0' style='width: 100%; margin-top: 10px;'>

@@ -1,22 +1,43 @@
 require 'sqlite3'
 require 'tiny_tds'
 require 'yaml'
+require 'logger'
 
 require_relative File.join(__dir__, '..', 'lib', 'util')
 class Services
   include Util
   def initialize(db=nil)
+    setup_logger
     @db=db
     conectar_banco_lite
+
   end
 
   private
+  def setup_logger
+    # Determina o caminho base do projeto
+    project_root = File.expand_path(File.join(__dir__, '..'))
+    log_dir = File.join(project_root, 'log')
+    log_file = File.join(log_dir, 'database.log')
+
+    # Cria o diretório se ele não existir
+    FileUtils.mkdir_p(log_dir) unless File.directory?(log_dir)
+
+    @logger.info "Criando log em: #{log_file}"  # Debug: mostra onde o log será criado
+
+    @logger = Logger.new(log_file)
+    @logger.level = Logger::INFO
+  rescue StandardError
+    @logger = Logger.new(STDOUT)
+  end
+
   def conectar_banco_lite
     @db = SQLite3::Database.new @db
-    puts "Conectado com sucesso"
-  rescue SQLite3::Exception
-    puts 'Erro ao conectar no banco'
+    @logger.info("Conectado com sucesso")
+  rescue SQLite3::Exception => e
+    @logger.error("Erro ao conectar no banco: #{e.message}")
   end
+
 
   private
   def conectar_banco_server_loja(ip,cod_filial,filial)
@@ -29,7 +50,8 @@ class Services
         database: cod_filial == 102 ? config["database_server"]["database"][1] : config["database_server"]["database"][0],
         port: 1433
       )
-    rescue TinyTds::Error
+    rescue TinyTds::Error => e
+      @logger.error("Não foi possivel conectar no banco da loja #{e.message}")
       add_list([filial, cod_filial.to_s.rjust(6, '0')])
       false
     end
@@ -46,7 +68,8 @@ class Services
         database: config["database_ret"]["database"],
         port: 1433
       )
-    rescue TinyTds::Error
+    rescue TinyTds::NotFoundException => e
+      @logger.error("Não foi possivel conectar no banco da retaguarda: #{e.message}")
       add_list([filial, cod_filial.to_s.rjust(6, '0')])
       false
     end
@@ -55,23 +78,21 @@ class Services
   def fechar_conexao_lite
     if @db
       @db.close
-      puts "Banco Fechado"
+      @logger.info("Banco Fechado")
     else
-      puts "Não existe nenhuma conexão"
+      @logger.info "Não existe nenhuma conexão"
     end
-  rescue SQLite3::Exception
-    puts "Erro ao fechar o banco"
-  ensure
-    @db.close
+  rescue SQLite3::ClosedError => e
+    @logger.error("Erro ao fechar o banco de dados SQLITE: #{e.message}")
   end
 
   def fecha_conexao_server(client)
     if client
       client.close
-      puts 'conexão client fechado'
+      @logger.info("conexão SQL Server da loja e/ou retaguarda fechada")
     end
-  rescue TinyTds::Client::Timeout
-    puts 'Erro ao fechar conexão'
+  rescue TinyTds::Client::Timeout => e
+    @logger.error("Erro ao fechar conexão do SQL Server da loja e/ou retaguarda: #{e.message}")
   end
 
   public
@@ -79,7 +100,7 @@ class Services
       lojas_para_email = []
       lojas_valores = []
       ret_valores = []
-      scripts = obter_scripts_update(formatar_data)
+      #scripts = obter_scripts_update(formatar_data)
       if verifica_horario
         if script_permitido?(script)
           executar_banco_lite(script) do |rows|
@@ -88,17 +109,16 @@ class Services
               cod_filial = row[1].to_s.rjust(6,'0')
               filial = row[2]
               client_loja = conectar_banco_server_loja(ip,cod_filial,filial)
-              if client_loja
                 executar_banco_server(client_loja,"select sum(valor_pago) from LOJA_VENDA where DATA_VENDA='#{formatar_data}'") do |linhas|
                   linhas.each do |roww|
                     hash = roww
                     valor = hash[""]
                     if valor
                       valor_formatado = sprintf("%.2f",valor)
-                      puts "valor na loja: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
+                      @logger.info "valor na loja: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
                       lojas_valores << [valor_formatado, cod_filial, filial,ip]
                     else
-                      puts "Filial #{filial} (#{cod_filial}) sem venda"
+                      @logger.info "Filial #{filial} (#{cod_filial}) sem venda no banco da loja"
                     end
                   end
                 rescue TinyTds::Error, SQLException::Exception
@@ -106,34 +126,29 @@ class Services
                 ensure
                   fecha_conexao_server(client_loja)
                 end
-              else
-                puts "Não foi possivel estabelecer comunicação"
-              end
               client_ret = conectar_banco_server_ret
-              if client_ret
                 executar_banco_server(client_ret,"SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{formatar_data}' AND CODIGO_FILIAL='#{cod_filial.to_s.rjust(6,'0')}'") do |ret|
                   ret.each do |valor_ret|
                     hash = valor_ret
                     valor = hash[""]
                     if valor
                       valor_formatado = sprintf("%.2f",valor)
-                      puts "valor na retaguarda: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
+                      @logger.info "valor na retaguarda: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
                       ret_valores << [valor_formatado, cod_filial]
+                    else
+                      @logger.info "Filial #{filial} (#{cod_filial}) sem venda no banco da retaguarda"
                     end
                   end
                 end
-              else
-                puts "Não foi possivel achar a loja"
-              end
             end
             fechar_conexao_lite
             comparar_valores(lojas_valores,ret_valores).each do |valor_loja, valor_ret, cod_filial, filial, ip|
             lojas_para_email << ["#{filial} (#{cod_filial})", valor_loja, valor_loja.to_f - (valor_ret || 0).to_f, valor_ret || 0]
-            rodar_script_update(ip, filial, cod_filial,scripts)
+            #rodar_script_update(ip, filial, cod_filial,scripts)
             end
           end
         else
-          puts "Script não permitido"
+          @logger.error "Script não permitido: #{script}"
         end
         enviar_emails(lojas_para_email)
       end
@@ -147,19 +162,19 @@ class Services
         if result
           result.do  # Executa o update
           if result.affected_rows > 0
-            puts "Update executado com sucesso na filial: #{filial} (#{cod_filial})"
-            puts "#{result.affected_rows} linhas afetadas"
+            @logger.info "Update executado com sucesso na filial: #{filial} (#{cod_filial})"
+            @logger.info "#{result.affected_rows} linhas afetadas"
           else
-            puts "Nenhuma linha foi atualizada na filial #{cod_filial}"
+            @logger.info "Nenhuma linha foi atualizada na filial #{cod_filial}"
           end
         else
-          puts "Não foi possível executar o script na filial #{cod_filial}"
+          @logger.error "Não foi possível executar o script na filial #{cod_filial}"
         end
       else
-        puts "Script não permitido"
+        @logger.error "Script não permitido"
       end
-    rescue TinyTds::Error, SQLException::Exception => e
-      puts "Erro ao executar o script na filial #{cod_filial}: #{e.message}"
+    rescue TinyTds:: NotFoundException=> e
+      @logger.error "Erro ao executar o script na filial #{cod_filial}: #{e.message}"
       add_list([filial, cod_filial])
     ensure
       fecha_conexao_server(cliente)
@@ -233,37 +248,39 @@ class Services
     config_path = File.expand_path('../../Atualizar_Lojas/lib/config.yml', __dir__)
     YAML.load_file(config_path)
   end
-end
 
-def obter_scripts_update(data_formatada)
-  [
-    {
-      consulta: "UPDATE LOJA_VENDA_PGTO SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE DATA = @data",
-      parametros: { data: data_formatada }
-    },
-    {
-      consulta: "UPDATE LOJA_CAIXA_LANCAMENTOS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE DATA = @data",
-      parametros: { data: data_formatada }
-    },
-    {
-      consulta: "UPDATE LOJA_NOTA_FISCAL SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
-      parametros: { data: data_formatada }
-    },
-    {
-      consulta: "UPDATE LOJA_SAIDAS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
-      parametros: { data: data_formatada }
-    },
-    {
-      consulta: "UPDATE LOJA_ENTRADAS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
-      parametros: { data: data_formatada }
-    },
-    {
-      consulta: "UPDATE LOJA_CF_SAT SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
-      parametros: { data: data_formatada }
-    },
-    {
-      consulta: "UPDATE CLIENTES_VAREJO SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE CODIGO_CLIENTE IN (SELECT CODIGO_CLIENTE FROM LOJA_VENDA WHERE DATA_VENDA = @data)",
-      parametros: { data: data_formatada }
-    }
-  ]
-end
+=begin
+     def obter_scripts_update(data_formatada)
+       [
+         {
+           consulta: "UPDATE LOJA_VENDA_PGTO SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE DATA = @data",
+           parametros: { data: data_formatada }
+         },
+         {
+           consulta: "UPDATE LOJA_CAIXA_LANCAMENTOS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE DATA = @data",
+           parametros: { data: data_formatada }
+         },
+         {
+           consulta: "UPDATE LOJA_NOTA_FISCAL SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
+           parametros: { data: data_formatada }
+         },
+         {
+           consulta: "UPDATE LOJA_SAIDAS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
+           parametros: { data: data_formatada }
+         },
+         {
+           consulta: "UPDATE LOJA_ENTRADAS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
+           parametros: { data: data_formatada }
+         },
+         {
+           consulta: "UPDATE LOJA_CF_SAT SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
+           parametros: { data: data_formatada }
+         },
+         {
+           consulta: "UPDATE CLIENTES_VAREJO SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE CODIGO_CLIENTE IN (SELECT CODIGO_CLIENTE FROM LOJA_VENDA WHERE DATA_VENDA = @data)",
+           parametros: { data: data_formatada }
+         }
+       ]
+     end
+=end
+  end
