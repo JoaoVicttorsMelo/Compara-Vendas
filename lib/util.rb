@@ -12,7 +12,7 @@ module Util
   include EnviarEmail
   include GerarExcel
 
-  def verifica_horario
+  def verifica_horario?
     horario = Time.now
     data = Date.today
     if data.sunday?

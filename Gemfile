@@ -3,3 +3,4 @@ gem "sqlite3"
 gem "tiny_tds"
 gem 'write_xlsx'
 gem 'rspec'
+gem 'sequel'

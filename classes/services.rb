@@ -3,15 +3,18 @@ require 'tiny_tds'
 require 'yaml'
 require 'logger'
 require 'fileutils'
+require_relative 'filial_ip'  # Model para acessar a tabela filiais_ip
+require_relative '../lib/conexao_banco'  # Módulo para gerenciar a conexão com o banco de dados
 
 
 require_relative File.join(__dir__, '..', 'lib', 'util')
 class Services
+  include ConexaoBanco
   include Util
   def initialize(db=nil)
     setup_logger
     @db=db
-    conectar_banco_lite
+    abrir_conexao_banco_lite
 
   end
 
@@ -29,8 +32,8 @@ class Services
     # Teste inicial do logger
     @logger.info("Logger iniciado com sucesso")
   rescue StandardError => e
-    puts "Erro ao configurar logger: #{e.message}"
-    puts "Stacktrace: #{e.backtrace.join("\n")}"
+    p "Erro ao configurar logger: #{e.message}"
+    p "Stacktrace: #{e.backtrace.join("\n")}"
     @logger = Logger.new(STDOUT)
   end
 
@@ -48,11 +51,12 @@ class Services
   end
 
 
-  def conectar_banco_lite
-    @db = SQLite3::Database.new @db
-    @logger.info("Conectado com sucesso")
-  rescue SQLite3::Exception => e
-    @logger.error("Erro ao conectar no banco: #{e.message}")
+  def abrir_conexao_banco_lite
+    ConexaoBanco.parametros(@db)
+      @logger.info "Conexão estabelecida com sucesso"
+    rescue SQLite3::Exception => e
+      @logger.error "Erro ao abrir conexão: #{e.message}"
+      retry_connection(e) # Tenta reconectar em caso de erro.
   end
 
 
@@ -92,17 +96,6 @@ class Services
     end
   end
 
-  def fechar_conexao_lite
-    if @db
-      @db.close
-      @logger.info("Banco Fechado")
-    else
-      @logger.info "Não existe nenhuma conexão"
-    end
-  rescue SQLite3::ClosedError => e
-    @logger.error("Erro ao fechar o banco de dados SQLITE: #{e.message}")
-  end
-
   def fecha_conexao_server(client)
     if client
       client.close
@@ -112,28 +105,27 @@ class Services
     @logger.error("Erro ao fechar conexão do SQL Server da loja e/ou retaguarda: #{e.message}")
   end
 
+
   public
-    def datasync(script)
+    def datasync
       lojas_para_email = []
       lojas_valores = []
       ret_valores = []
-      #scripts = obter_scripts_update(formatar_data)
-      if verifica_horario
-        if script_permitido?(script)
-          executar_banco_lite(script) do |rows|
-            rows.each do |row|
-              ip = row[0]
-              cod_filial = row[1].to_s.rjust(6,'0')
-              filial = row[2]
+      if verifica_horario?
+            ips = FiliaisIp.where(servidor: 1).select(:ip, :filial, :cod_filial)
+            ips.each do |row|
+              ip = row.IP
+              filial = row.FILIAL
+              cod_filial = row.COD_FILIAL
               client_loja = conectar_banco_server_loja(ip,cod_filial,filial)
-                executar_banco_server(client_loja,"select sum(valor_pago) from LOJA_VENDA where DATA_VENDA='#{formatar_data}'") do |linhas|
+              executar_banco_server(client_loja,"select sum(valor_pago) from LOJA_VENDA where DATA_VENDA='#{formatar_data}'") do |linhas|
                   linhas.each do |roww|
                     hash = roww
                     valor = hash[""]
                     if valor
                       valor_formatado = sprintf("%.2f",valor)
                       @logger.info "valor na loja: #{valor_formatado} da filial #{filial} (#{cod_filial.to_s.rjust(6,'0')})"
-                      lojas_valores << [valor_formatado, cod_filial, filial,ip]
+                      lojas_valores << [valor_formatado, cod_filial, filial, ip]
                     else
                       @logger.info "Filial #{filial} (#{cod_filial}) sem venda no banco da loja"
                     end
@@ -158,49 +150,57 @@ class Services
                   end
                 end
             end
-            fechar_conexao_lite
             comparar_valores(lojas_valores,ret_valores).each do |valor_loja, valor_ret, cod_filial, filial, ip|
+            rodar_script_update(ip, filial, cod_filial)
             lojas_para_email << ["#{filial} (#{cod_filial})", valor_loja, valor_loja.to_f - (valor_ret || 0).to_f, valor_ret || 0]
-            #rodar_script_update(ip, filial, cod_filial,scripts)
             end
-          end
-        else
-          @logger.error "Script não permitido: #{script}"
-        end
         enviar_emails(lojas_para_email)
       end
     end
 
-  def rodar_script_update(ip, filial, cod_filial,scripts)
+  def rodar_script_update(ip, filial, cod_filial)
     cliente = conectar_banco_server_loja(ip, filial, cod_filial)
+    formatar_data_valor = formatar_data # Chama a função que retorna a data formatada
     begin
-      if script_permitido?(scripts)
-        result = cliente.execute(scripts)
-        if result
-          result.do  # Executa o update
-          if result.affected_rows > 0
-            @logger.info "Update executado com sucesso na filial: #{filial} (#{cod_filial})"
-            @logger.info "#{result.affected_rows} linhas afetadas"
-          else
-            @logger.info "Nenhuma linha foi atualizada na filial #{cod_filial}"
-          end
-        else
-          @logger.error "Não foi possível executar o script na filial #{cod_filial}"
-        end
-      else
-        @logger.error "Script não permitido"
+      # Iniciar transação
+      cliente.execute("BEGIN TRANSACTION").do
+
+      # Lista de comandos UPDATE com a data formatada interpolada
+      updates = [
+        "UPDATE LOJA_VENDA_PGTO SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE DATA = '#{formatar_data_valor}'",
+        "UPDATE LOJA_CAIXA_LANCAMENTOS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE DATA = '#{formatar_data_valor}'",
+        "UPDATE LOJA_NOTA_FISCAL SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = '#{formatar_data_valor}'",
+        "UPDATE LOJA_SAIDAS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = '#{formatar_data_valor}'",
+        "UPDATE LOJA_ENTRADAS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = '#{formatar_data_valor}'",
+        "UPDATE LOJA_CF_SAT SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = '#{formatar_data_valor}'",
+        "UPDATE CLIENTES_VAREJO SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE CODIGO_CLIENTE IN (SELECT CODIGO_CLIENTE FROM LOJA_VENDA WHERE DATA_VENDA = '#{formatar_data_valor}')"
+      ]
+
+      total_linhas_afetadas = 0
+
+      updates.each do |query|
+        result = cliente.execute(query)
+        result.do # Executa o comando
+
+        linhas_afetadas = result.affected_rows
+        total_linhas_afetadas += linhas_afetadas
+
+        @logger.info "Comando executado na filial #{filial} (#{cod_filial}): #{linhas_afetadas} linhas afetadas."
       end
-    rescue TinyTds:: NotFoundException=> e
-      @logger.error "Erro ao executar o script na filial #{cod_filial}: #{e.message}"
+
+      # Confirmar transação
+      cliente.execute("COMMIT TRANSACTION").do
+
+      @logger.info "Atualização concluída na filial #{filial} (#{cod_filial}). Total de linhas afetadas: #{total_linhas_afetadas}."
+    rescue TinyTds::Error => e
+      # Reverter transação em caso de erro
+      cliente.execute("ROLLBACK TRANSACTION").do rescue nil
+      @logger.error "Erro ao executar os scripts na filial #{filial} (#{cod_filial}): #{e.message}"
       add_list([filial, cod_filial])
     ensure
       fecha_conexao_server(cliente)
     end
   end
-
-
-
-
 
   def processar_loja(list)
     qtd_abertura = []
@@ -209,7 +209,6 @@ class Services
       filial, cod_filial = list
       client = conectar_banco_server_ret
       script = "SELECT TIPO_LANCAMENTO_CAIXA FROM LOJA_CAIXA_LANCAMENTOS WHERE CODIGO_FILIAL='#{cod_filial}' AND DATA='#{formatar_data}' AND TIPO_LANCAMENTO_CAIXA in ('00','99')"
-      if script_permitido?(script)
         executar_banco_server(client, script) do |linhas|
           linhas.each do |row|
             valor = row["TIPO_LANCAMENTO_CAIXA"]
@@ -220,7 +219,6 @@ class Services
         if qtd_abertura.length != qtd_fechamento.length
           return "#{filial} (#{cod_filial})"
         end
-      end
     end
   end
 
@@ -235,69 +233,15 @@ class Services
     resultados
   end
 
-
-  private
-  def executar_banco_lite(script)
-    if script_permitido?(script)
-      row = @db.execute(script)
-      yield(row) if block_given?
-    end
-  end
-
   def executar_banco_server(client,script)
       if client
-        if script_permitido?(script)
           row = client.execute(script)
           yield(row) if block_given?
-        end
       end
   end
 
-  private
-  def script_permitido?(script)
-    # Lista de scripts permitidos para maior segurança
-    scripts_permitidos = %w[select where]
-    scripts_permitidos.any? { |palavra| script.downcase.include?(palavra) }
-  end
-
-  public
   def conectar_yml
     config_path = File.expand_path('../../Atualizar_Lojas/lib/config.yml', __dir__)
     YAML.load_file(config_path)
   end
-
-=begin
-     def obter_scripts_update(data_formatada)
-       [
-         {
-           consulta: "UPDATE LOJA_VENDA_PGTO SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE DATA = @data",
-           parametros: { data: data_formatada }
-         },
-         {
-           consulta: "UPDATE LOJA_CAIXA_LANCAMENTOS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE DATA = @data",
-           parametros: { data: data_formatada }
-         },
-         {
-           consulta: "UPDATE LOJA_NOTA_FISCAL SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
-           parametros: { data: data_formatada }
-         },
-         {
-           consulta: "UPDATE LOJA_SAIDAS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
-           parametros: { data: data_formatada }
-         },
-         {
-           consulta: "UPDATE LOJA_ENTRADAS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
-           parametros: { data: data_formatada }
-         },
-         {
-           consulta: "UPDATE LOJA_CF_SAT SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE EMISSAO = @data",
-           parametros: { data: data_formatada }
-         },
-         {
-           consulta: "UPDATE CLIENTES_VAREJO SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE CODIGO_CLIENTE IN (SELECT CODIGO_CLIENTE FROM LOJA_VENDA WHERE DATA_VENDA = @data)",
-           parametros: { data: data_formatada }
-         }
-       ]
-     end
-=end
   end
