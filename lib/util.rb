@@ -125,7 +125,6 @@ module Util
 
   def inserir_novo_registro(data_atual)
     inserir_valor = UltimoEmail.new(
-      data_envio_pendente: data_atual,
       data_envio_concluido: data_atual
     )
     if inserir_valor.save
