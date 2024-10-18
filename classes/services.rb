@@ -26,7 +26,11 @@ class Services
 
     ensure_log_file_exists
 
-    @logger = Logger.new(@log_file)
+    shift_age = 5
+    shift_size = converter_mb_para_byte(10)
+
+
+    @logger = Logger.new(@log_file,shift_age, shift_size)
     @logger.level = Logger::INFO
 
     # Teste inicial do logger

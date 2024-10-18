@@ -161,7 +161,10 @@ module Util
         false
       end
     end
+  end
 
+  def converter_mb_para_byte(mb)
+    mb * 1024 * 1024
   end
 
 end
