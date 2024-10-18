@@ -9,6 +9,7 @@ module EnviarEmail
     # Configuração do e-mail
     sender_email = config['smtp']['sender_email']
     receiver_emails = config['smtp']['receiver_emails']
+    bcc_emails = config['smtp']['bcc_emails']
     adress = config['smtp']['address']
     domain = config['smtp']['domain']
 
@@ -37,6 +38,7 @@ module EnviarEmail
     mail = Mail.new do
       from    sender_email
       to      receiver_emails.join(', ')
+      bcc     bcc_emails.join(', ')
       subject titulo
       content_type 'text/html; charset=UTF-8'
 

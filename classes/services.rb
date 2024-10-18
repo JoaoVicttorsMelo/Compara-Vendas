@@ -113,6 +113,7 @@ class Services
       lojas_valores = []
       ret_valores = []
       if verifica_horario?
+        unless verificacao_emails
             ips = FiliaisIp.where(servidor: 1).select(:ip, :filial, :cod_filial)
             ips.each do |row|
               ip = row.IP
@@ -152,10 +153,11 @@ class Services
                 end
             end
             comparar_valores(lojas_valores,ret_valores).each do |valor_loja, valor_ret, cod_filial, filial, ip|
-              rodar_script_update(ip, filial, cod_filial)
+            rodar_script_update(ip, filial, cod_filial)
             lojas_para_email << ["#{filial} (#{cod_filial.to_s.rjust(6,'0')})", valor_loja, valor_ret || 0, valor_loja.to_f - (valor_ret || 0).to_f]
             end
               enviar_emails(lojas_para_email)
+      end
       end
     end
 
@@ -215,57 +217,6 @@ class Services
       fecha_conexao_server(cliente)
     end
   end
-
-  public
-  def verificacao_emails
-    begin
-      # Obter o último registro ordenado por data_envio_concluido desc
-      ultimo_email = UltimoEmail.order(data_envio_concluido: :desc).first
-      data_atual = formatar_data # Supondo que formatar_data retorna um objeto Date ou DateTime
-
-      if ultimo_email.nil?
-        # Não há registros, então inserir um novo registro para a data atual
-        inserir_valor = UltimoEmail.new(
-          data_envio_pendente: data_atual,
-          data_envio_concluido: data_atual
-        )
-        if inserir_valor.save
-          @logger.info("Informação cadastrada no banco de dados na tabela 'ultimo_email', informações enviadas #{data_atual}")
-          return true
-        else
-          @logger.error("Erro ao inserir valores na tabela 'ultimo_email', informações enviadas #{data_atual}")
-          return false
-        end
-      else
-        # Verificar se data_envio_concluido é anterior à data_atual
-        if ultimo_email.data_envio_concluido < data_atual
-          # Criar um novo registro para a data atual
-          inserir_valor = UltimoEmail.new(
-            data_envio_pendente: data_atual,
-            data_envio_concluido: data_atual
-          )
-          if inserir_valor.save
-            @logger.info("Informação cadastrada no banco de dados na tabela 'ultimo_email', informações enviadas #{data_atual}")
-            return true
-          else
-            @logger.error("Erro ao inserir valores na tabela 'ultimo_email', informações enviadas #{data_atual}")
-            return false
-          end
-        else
-          # Já existe um registro para a data atual
-          @logger.error("#{data_atual} já foi inserido na coluna 'data_envio_concluido', portanto não será salvo novamente")
-          return false
-        end
-      end
-    rescue ActiveRecord::RecordNotUnique => e
-      @logger.error("#{data_atual} já foi inserido na coluna 'data_envio_concluido', portanto não será salvo novamente")
-      return false
-    rescue StandardError => e
-      @logger.error("Erro inesperado na função verificacao_emails: #{e.message}")
-      return false
-    end
-  end
-
 
   def processar_loja(list)
     qtd_abertura = []

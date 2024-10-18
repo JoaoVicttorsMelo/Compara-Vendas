@@ -114,13 +114,54 @@ module Util
   </table>"
         )
       else
-        if verificacao_emails
+        if verificacao_emails(1)
           enviar_email("Datasync: Lojas sem diferenças",'Valores Lojas X Retaguarda estão corretos:<br>',
                        "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>",nil)
         else
         end
       end
     end
+  end
+
+  def inserir_novo_registro(data_atual)
+    inserir_valor = UltimoEmail.new(
+      data_envio_pendente: data_atual,
+      data_envio_concluido: data_atual
+    )
+    if inserir_valor.save
+      @logger.info("Informação cadastrada no banco de dados na tabela 'ultimo_email', informações enviadas #{data_atual}")
+      true
+    else
+      @logger.error("Erro ao inserir valores na tabela 'ultimo_email', informações enviadas #{data_atual}")
+      false
+    end
+  end
+
+  public
+  def verificacao_emails(validacao = 0)
+    ultimo_email = UltimoEmail.order(data_envio_concluido: :desc).first
+    data_atual = formatar_data
+    if validacao == 0 && ultimo_email.data_envio_concluido == data_atual
+      @logger.info("Já existe um registro para a data atual: #{data_atual}. Cancelando o envio.")
+      return true
+    end
+    if validacao == 1
+      begin
+        if ultimo_email.nil? || ultimo_email.data_envio_concluido < data_atual
+          return inserir_novo_registro(data_atual)
+        else
+          @logger.error("#{data_atual} já foi inserido na coluna 'data_envio_concluido', portanto não será salvo novamente")
+          return false
+        end
+      rescue ActiveRecord::RecordNotUnique
+        @logger.error("#{data_atual} já foi inserido na coluna 'data_envio_concluido', portanto não será salvo novamente")
+        false
+      rescue StandardError => e
+        @logger.error("Erro inesperado na função verificacao_emails: #{e.message}")
+        false
+      end
+    end
+
   end
 
 end
