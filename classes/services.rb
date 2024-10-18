@@ -60,8 +60,9 @@ class Services
   end
 
 
-  private
+  public
   def conectar_banco_server_loja(ip,cod_filial,filial)
+
     begin
       config = conectar_yml
       TinyTds::Client.new(
@@ -74,7 +75,7 @@ class Services
     rescue TinyTds::Error => e
       @logger.error("Não foi possivel conectar no banco da loja #{e.message}")
       add_list([filial, cod_filial.to_s.rjust(6, '0')])
-      false
+      nil
     end
   end
 
@@ -97,7 +98,7 @@ class Services
   end
 
   def fecha_conexao_server(client)
-    if client
+  if client && !client.closed?
       client.close
       @logger.info("conexão SQL Server da loja e/ou retaguarda fechada")
     end
@@ -151,21 +152,30 @@ class Services
                 end
             end
             comparar_valores(lojas_valores,ret_valores).each do |valor_loja, valor_ret, cod_filial, filial, ip|
-            rodar_script_update(ip, filial, cod_filial)
-            lojas_para_email << ["#{filial} (#{cod_filial})", valor_loja, valor_loja.to_f - (valor_ret || 0).to_f, valor_ret || 0]
+              rodar_script_update(ip, filial, cod_filial)
+            lojas_para_email << ["#{filial} (#{cod_filial.to_s.rjust(6,'0')})", valor_loja, valor_ret || 0, valor_loja.to_f - (valor_ret || 0).to_f]
             end
-        enviar_emails(lojas_para_email)
+              enviar_emails(lojas_para_email)
       end
     end
 
+  public
   def rodar_script_update(ip, filial, cod_filial)
-    cliente = conectar_banco_server_loja(ip, filial, cod_filial)
-    formatar_data_valor = formatar_data # Chama a função que retorna a data formatada
+    cliente = conectar_banco_server_loja(ip, cod_filial, filial)
+    unless cliente
+      @logger.error "Não foi possível conectar à filial #{filial} (#{cod_filial})."
+      add_list([filial, cod_filial])
+      return
+    end
+
+    formatar_data_valor = formatar_data
     begin
       # Iniciar transação
       cliente.execute("BEGIN TRANSACTION").do
 
-      # Lista de comandos UPDATE com a data formatada interpolada
+      # Definir variável SQL para a data
+      cliente.execute("DECLARE @data DATE = '#{formatar_data_valor}'").do
+
       updates = [
         "UPDATE LOJA_VENDA_PGTO SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE DATA = '#{formatar_data_valor}'",
         "UPDATE LOJA_CAIXA_LANCAMENTOS SET DATA_PARA_TRANSFERENCIA = GETDATE() WHERE DATA = '#{formatar_data_valor}'",
@@ -185,22 +195,77 @@ class Services
         linhas_afetadas = result.affected_rows
         total_linhas_afetadas += linhas_afetadas
 
-        @logger.info "Comando executado na filial #{filial} (#{cod_filial}): #{linhas_afetadas} linhas afetadas."
+        @logger.info "Comando executado na filial #{filial} (#{cod_filial.to_s.rjust(6,'0')}): #{linhas_afetadas} linhas afetadas."
       end
 
       # Confirmar transação
       cliente.execute("COMMIT TRANSACTION").do
 
-      @logger.info "Atualização concluída na filial #{filial} (#{cod_filial}). Total de linhas afetadas: #{total_linhas_afetadas}."
+      @logger.info "Atualização concluída na filial #{filial} (#{cod_filial.to_s.rjust(6,'0')}). Total de linhas afetadas: #{total_linhas_afetadas}."
     rescue TinyTds::Error => e
       # Reverter transação em caso de erro
-      cliente.execute("ROLLBACK TRANSACTION").do rescue nil
-      @logger.error "Erro ao executar os scripts na filial #{filial} (#{cod_filial}): #{e.message}"
-      add_list([filial, cod_filial])
+      begin
+        cliente.execute("ROLLBACK TRANSACTION").do
+      rescue
+        # Ignora erros no rollback
+      end
+      @logger.error "Erro ao executar os scripts na filial #{filial} (#{cod_filial.to_s.rjust(6,'0')}): #{e.message}"
+      add_list([filial, cod_filial.to_s.rjust(6,'0')])
     ensure
       fecha_conexao_server(cliente)
     end
   end
+
+  public
+  def verificacao_emails
+    begin
+      # Obter o último registro ordenado por data_envio_concluido desc
+      ultimo_email = UltimoEmail.order(data_envio_concluido: :desc).first
+      data_atual = formatar_data # Supondo que formatar_data retorna um objeto Date ou DateTime
+
+      if ultimo_email.nil?
+        # Não há registros, então inserir um novo registro para a data atual
+        inserir_valor = UltimoEmail.new(
+          data_envio_pendente: data_atual,
+          data_envio_concluido: data_atual
+        )
+        if inserir_valor.save
+          @logger.info("Informação cadastrada no banco de dados na tabela 'ultimo_email', informações enviadas #{data_atual}")
+          return true
+        else
+          @logger.error("Erro ao inserir valores na tabela 'ultimo_email', informações enviadas #{data_atual}")
+          return false
+        end
+      else
+        # Verificar se data_envio_concluido é anterior à data_atual
+        if ultimo_email.data_envio_concluido < data_atual
+          # Criar um novo registro para a data atual
+          inserir_valor = UltimoEmail.new(
+            data_envio_pendente: data_atual,
+            data_envio_concluido: data_atual
+          )
+          if inserir_valor.save
+            @logger.info("Informação cadastrada no banco de dados na tabela 'ultimo_email', informações enviadas #{data_atual}")
+            return true
+          else
+            @logger.error("Erro ao inserir valores na tabela 'ultimo_email', informações enviadas #{data_atual}")
+            return false
+          end
+        else
+          # Já existe um registro para a data atual
+          @logger.error("#{data_atual} já foi inserido na coluna 'data_envio_concluido', portanto não será salvo novamente")
+          return false
+        end
+      end
+    rescue ActiveRecord::RecordNotUnique => e
+      @logger.error("#{data_atual} já foi inserido na coluna 'data_envio_concluido', portanto não será salvo novamente")
+      return false
+    rescue StandardError => e
+      @logger.error("Erro inesperado na função verificacao_emails: #{e.message}")
+      return false
+    end
+  end
+
 
   def processar_loja(list)
     qtd_abertura = []
@@ -229,6 +294,7 @@ class Services
         resultado = processar_loja(list)
         resultados << resultado if resultado
       end
+      else
     end
     resultados
   end

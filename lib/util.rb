@@ -72,6 +72,7 @@ module Util
     if lista.any?
       anexo =  gerar_excel(lista)
       lojas_erro = show_list(false)
+      resultado_consulta = []  # Inicializa como array vazio
       unless lojas_erro.empty?
         resultado_consulta = consulta_caixa_lancamento(lojas_erro)
       end
@@ -91,7 +92,7 @@ module Util
   </table>"
         )
       else
-        enviar_email("Datasync: Lojas com diferenças",'Olá, boa tarde<br> Segue lojas que estão com diferenças entre Retaguarda e Loja em anexo:<br>',
+        enviar_email("Datasync: Lojas com diferenças",'Olá, boa tarde<br> Segue lojas que estão com diferenças entre Retaguarda e Loja em anexo:<br>',nil,
                      "<p class='big-bold'><center>Nenhuma loja deu erro na conexão!</center><p>", anexo)
       end
     else
@@ -113,8 +114,11 @@ module Util
   </table>"
         )
       else
-        enviar_email("Datasync: Lojas sem diferenças",'Valores Lojas X Retaguarda estão corretos:<br>',
-                     "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>",nil)
+        if verificacao_emails
+          enviar_email("Datasync: Lojas sem diferenças",'Valores Lojas X Retaguarda estão corretos:<br>',
+                       "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>",nil)
+        else
+        end
       end
     end
   end
