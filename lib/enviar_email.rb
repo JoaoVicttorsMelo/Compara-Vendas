@@ -13,7 +13,7 @@ module EnviarEmail
   # @param informacao [Array, String, nil] informações adicionais para serem incluídas em uma tabela HTML
   # @param caminho_arquivo_anexo [String, nil] caminho para um arquivo a ser anexado ao e-mail
   # @param info_opcional [String, nil] informações opcionais adicionais para serem incluídas no corpo do e-mail
-  def enviar_email(titulo, corpo, corpo2 = nil, informacao = nil, caminho_arquivo_anexo = nil, info_opcional = nil)
+  def enviar_email(titulo:, corpo:, corpo2: nil, informacao: nil, caminho_arquivo_anexo: nil, info_opcional: nil, incluir_style: true)
     # Define o caminho para o arquivo de configuração 'config.yml' localizado na mesma pasta do módulo
     config_path = File.join(__dir__, 'config.yml')
     # Carrega as configurações do arquivo YAML
@@ -71,78 +71,73 @@ module EnviarEmail
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Relatório Datasync</title>
- <style>
-  body {
-    font-family: 'Arial', sans-serif;
-    background-color: #f4f4f9;
-    color: #333333;
-    line-height: 1.6;
-  }
+  #{ incluir_style ?
+       "<style>
+      body {
+        font-family: 'Arial', sans-serif;
+        background-color: #f4f4f9;
+        color: #333333;
+        line-height: 1.6;
+      }
 
-  /* Título principal - h1 */
-  h1 {
-    color: #d9534f;
-    text-align: center;
-    font-size: 28px; /* Aumentei para dar mais destaque */
-    margin-bottom: 20px;
-  }
+      h1 {
+        color: #d9534f;
+        text-align: center;
+        font-size: 28px;
+        margin-bottom: 20px;
+      }
 
-  /* Subtítulos destacados - h2 */
-  h2 {
-    color: #5bc0de;
-    text-align: center;
-    font-size: 22px;
-    margin-bottom: 15px;
-  }
+      h2 {
+        color: #5bc0de;
+        text-align: center;
+        font-size: 22px;
+        margin-bottom: 15px;
+      }
 
-  /* Classe para textos em negrito e grande */
-  .big-bold {
-    font-size: 22px; /* Um pouco maior para destacar */
-    font-weight: bold;
-    text-align: center;
-    margin-bottom: 15px;
-  }
+      .big-bold {
+        font-size: 22px;
+        font-weight: bold;
+        text-align: center;
+        margin-bottom: 15px;
+      }
 
-  /* Estilização das tabelas */
-  table, th, td {
-    border: 1px solid #333333;
-    padding: 12px;
-    font-size: 18px; /* Fonte mais consistente com os outros elementos */
-    text-align: center;
-    vertical-align: middle;
-  }
+      table, th, td {
+        border: 1px solid #333333;
+        padding: 12px;
+        font-size: 18px;
+        text-align: center;
+        vertical-align: middle;
+      }
 
-  /* Textos menores nas listas */
-  li {
-    font-size: 18px; /* Igual ao tamanho das células, para padronizar */
-    text-align: center;
-    margin-bottom: 10px;
-  }
+      li {
+        font-size: 18px;
+        text-align: center;
+        margin-bottom: 10px;
+      }
 
-  /* Seção de diferenças */
-  .differences-section h1 {
-    color: #d9534f;
-    text-align: center;
-    margin-bottom: 10px;
-    border-bottom: 2px solid red;
-    padding-bottom: 10px;
-  }
+      .differences-section h1 {
+        color: #d9534f;
+        text-align: center;
+        margin-bottom: 10px;
+        border-bottom: 2px solid red;
+        padding-bottom: 10px;
+      }
 
-  /* Ajuste de responsividade */
-  @media (max-width: 600px) {
-    h1 {
-      font-size: 24px;
-    }
+      @media (max-width: 600px) {
+        h1 {
+          font-size: 24px;
+        }
 
-    .big-bold {
-      font-size: 20px;
-    }
+        .big-bold {
+          font-size: 20px;
+        }
 
-    table, th, td, li {
-      font-size: 16px;
-    }
-  }
-</style>
+        table, th, td, li {
+          font-size: 16px;
+        }
+      }
+    </style>" : ""
+      }
 </head>
 <body>
   <h1 id="titulo"><strong>#{corpo}</strong></h1>
@@ -154,7 +149,7 @@ module EnviarEmail
   <br><br>
 </body>
 </html>
-      HTML
+HTML
     end
 
     # Adiciona o arquivo anexado se o caminho for fornecido e o arquivo existir

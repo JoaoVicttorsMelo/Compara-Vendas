@@ -2,6 +2,7 @@
 require 'time'                   # Biblioteca para manipulação de datas e horários
 require 'date'                   # Biblioteca para manipulação de datas
 require_relative File.join(__dir__, '..', 'lib', 'enviar_email')  # Módulo para envio de e-mails
+require_relative File.join(__dir__, '..', 'classes', 'services')  # classe para conectar no banco
 require_relative File.join(__dir__, '..', 'lib', 'gerar_excel')    # Módulo para geração de arquivos Excel
 
 # Definição do módulo Util que inclui funcionalidades de envio de e-mails e geração de Excel
@@ -37,9 +38,15 @@ module Util
   end
 
   # Converte o hash retornado pela consulta para obter o valor desejado
-  def converter_hash(hash)
+  def converter_hash_vazias(hash)
     converter = hash
     converter[""]
+  end
+
+
+  # Converte megabytes para bytes
+  def converter_mb_para_byte(mb)
+    mb * 1024 * 1024  # Multiplica por 1024 duas vezes para converter MB em bytes
   end
 
   # Formata o valor para ter duas casas decimais
@@ -91,74 +98,128 @@ module Util
 
   # Envia e-mails com os resultados da sincronização
   def enviar_emails(lista)
-    if lista.any?  # Se houver lojas para notificar
-      anexo = gerar_excel(lista)  # Gera um arquivo Excel com a lista
-      lojas_erro = show_list(false)  # Obtém a lista de lojas com erros
-      resultado_consulta = []  # Inicializa a lista de resultados da consulta
+    lojas_erro = show_list(false)
+    resultado_consulta = consulta_caixa_lancamento(lojas_erro) unless lojas_erro.empty?
 
-      unless lojas_erro.empty?
-        resultado_consulta = consulta_caixa_lancamento(lojas_erro)  # Verifica consistência de caixa nas lojas com erros
-      end
-
-      if resultado_consulta.any?
-        # Envia e-mail informando lojas com diferenças e anexando o Excel
-        enviar_email(
-          "Datasync: Lojas com diferenças",
-          "Lojas com diferenças:<br>",
-          "<p class='big-bold'> Segue as lojas que não foram possíveis de fazer a verificação automática:</p>",
-          resultado_consulta,
-          anexo,
-          "<h1>Possíveis Diferenças nas Vendas!</h1>
-          <p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática. Essas diferenças serão validadas somente após:</p>
-          <table border='1' cellpadding='5' cellspacing='0' style='width: 100%; margin-top: 10px;'>
-            <tr>
-              <td style='text-align: center; vertical-align: middle;'>Abertura das lojas e reativação dos terminais, especialmente se estiverem em fusos horários diferentes.</td>
-            </tr>
-          </table>"
-        )
-      else
-        # Envia e-mail informando que nenhuma loja teve erro de conexão
-        enviar_email(
-          "Datasync: Lojas com diferenças",
-          'Olá, boa tarde<br> Segue lojas que estão com diferenças entre Retaguarda e Loja em anexo:<br>',
-          nil,
-          "<p class='big-bold'><center>Nenhuma loja deu erro na conexão!</center><p>",
-          anexo
-        )
-      end
+    if lista.any?
+      anexo = gerar_excel(lista)
+      enviar_email_diferencas(anexo, resultado_consulta)
     else
-      lojas_erro = show_list(false)  # Obtém a lista de lojas com erros
-      resultado_consulta = consulta_caixa_lancamento(lojas_erro)  # Verifica consistência de caixa
+      enviar_email_sem_diferencas(resultado_consulta)
+    end
+  end
 
-      if resultado_consulta.any?
-        # Envia e-mail informando que existem lojas sem diferenças, mas com erros na conexão
+  def enviar_email_diferencas(anexo, resultado_consulta)
+    info_opcional = if resultado_consulta.any?
+                      "<h1>Possíveis Diferenças nas Vendas!</h1>
+    <p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática. Essas diferenças serão validadas somente após: 'Abertura das lojas e reativação dos terminais, especialmente se estiverem em fusos horários diferentes.
+'</p>"
+                    else
+                      nil
+                    end
+
+    enviar_email(
+      titulo: "Datasync: Lojas com diferenças",
+      corpo: "Lojas com diferenças:<br>",
+      corpo2: "<p class='big-bold'>Segue as lojas que não foram possíveis de fazer a verificação automática:</p>",
+      informacao: resultado_consulta,
+      caminho_arquivo_anexo: anexo,
+      info_opcional: info_opcional
+    )
+  end
+
+  def enviar_email_sem_diferencas(resultado_consulta)
+    if resultado_consulta.any?
+      enviar_email(
+        titulo: "Datasync: Lojas sem diferenças",
+        corpo: "Valores Lojas X Retaguarda estão corretos, exceto as filiais abaixo:<br>",
+        corpo2: "<p class='big-bold'>Segue as lojas que não foram possíveis de fazer a verificação automática:</p>",
+        informacao: resultado_consulta,
+        info_opcional: "<h1>Possíveis Diferenças nas Vendas!</h1>
+      <p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática. Essas diferenças serão validadas somente após: 'Abertura das lojas e reativação dos terminais, especialmente se estiverem em fusos horários diferentes.
+</p>"
+      )
+    else
+      if verificacao_emails(1)
         enviar_email(
-          "Datasync: Lojas sem diferenças",
-          "Valores Lojas X Retaguarda estão Corretos, exceto as filiais abaixo:<br>",
-          "<p class='big-bold'>Segue as lojas que não foram possíveis de fazer a verificação automática:<p><br>",
-          resultado_consulta,
-          nil,
-          "<h1>Possíveis Diferenças nas Vendas!</h1>
-          <p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática.Essas diferenças serão validadas somente após:</p>
-          <table border='1' cellpadding='5' cellspacing='0' style='width: 100%; margin-top: 10px;'>
-            <tr>
-              <td style='text-align: center; vertical-align: middle;'>Abertura das lojas e reativação dos terminais, especialmente se estiverem em fusos horários diferentes.</td>
-            </tr>
-          </table>"
+          titulo: "Datasync: Lojas sem diferenças",
+          corpo: 'Valores Lojas X Retaguarda estão corretos:<br>',
+          informacao: "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>"
         )
-      else
-        # Se não houver erros na conexão e nenhuma discrepância, envia e-mail confirmando tudo está correto
-        if verificacao_emails(1)
-          enviar_email(
-            "Datasync: Lojas sem diferenças",
-            'Valores Lojas X Retaguarda estão corretos:<br>',
-            "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>",
-            nil
-          )
-        end
       end
     end
   end
+
+  def preparar_conteudo_email_venda_travada(filial, cod_filial, lancamento_caixa, terminal, ticket, total, data_venda)
+    "<p>
+    A loja <strong>#{filial}</strong> (<strong>#{formatar_codigo_filial(cod_filial)}</strong>)
+    está com uma venda travada detectada, segue informações -
+    Lançamento de caixa: <strong>#{lancamento_caixa}</strong> no terminal:
+    <strong>#{terminal}</strong> do ticket: <strong>#{ticket}</strong>, com o valor
+    <strong>#{total}</strong> na data de venda: <strong>#{data_venda}</strong>.
+  </p>"
+  end
+
+  def venda_travada(ip, cod_filial, filial)
+    client_loja = conectar_banco_server_loja(ip, cod_filial, filial)
+    vendas_travadas = []
+
+    script = "SELECT LANCAMENTO_CAIXA, TERMINAL, TOTAL_VENDA FROM LOJA_VENDA_PGTO WHERE VENDA_FINALIZADA = '0' AND DATA='#{formatar_data}' AND CODIGO_FILIAL=#{formatar_codigo_filial(cod_filial)};"
+
+    executar_banco_server(client_loja, script) do |linhas|
+      linhas.each do |linha|
+        lancamento_caixa = linha["LANCAMENTO_CAIXA"]
+        terminal = linha["TERMINAL"]
+        total = linha["TOTAL_VENDA"]
+
+        ticket_query = "SELECT ticket FROM loja_venda WHERE data_venda='#{formatar_data}' AND LANCAMENTO_CAIXA='#{lancamento_caixa}' AND TERMINAL='#{terminal}'"
+
+        executar_banco_server(client_loja, ticket_query) do |row|
+          row.each do |rows|
+            ticket = rows["ticket"]
+
+            vendas_travadas << {
+              filial: filial,
+              cod_filial: cod_filial,
+              lancamento_caixa: lancamento_caixa,
+              terminal: terminal,
+              ticket: ticket,
+              total: total,
+              data_venda: formatar_data
+            }
+          end
+        end
+      end
+    end
+
+    unless vendas_travadas.empty?
+      conteudo_email = vendas_travadas.map do |venda|
+        preparar_conteudo_email_venda_travada(
+          venda[:filial],
+          venda[:cod_filial],
+          venda[:lancamento_caixa],
+          venda[:terminal],
+          venda[:ticket],
+          venda[:total],
+          venda[:data_venda]
+        )
+      end.join("<br>")
+
+      enviar_email_vendas_travadas(conteudo_email)
+    end
+  end
+
+
+
+  def enviar_email_vendas_travadas(conteudo_email)
+    enviar_email(
+      titulo: 'Loja com venda travada',
+      corpo: 'Segue lojas com venda travada na data de hoje',
+      informacao: conteudo_email,
+      incluir_style: true
+    )
+  end
+
 
   # Insere um novo registro na tabela 'ultimo_email' para registrar o envio de e-mail
   def inserir_novo_registro(data_atual)
@@ -202,8 +263,4 @@ module Util
     end
   end
 
-  # Converte megabytes para bytes
-  def converter_mb_para_byte(mb)
-    mb * 1024 * 1024  # Multiplica por 1024 duas vezes para converter MB em bytes
-  end
 end

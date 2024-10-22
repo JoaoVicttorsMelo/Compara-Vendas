@@ -15,6 +15,7 @@ class Services
   include ConexaoBanco  # Inclusão do módulo de conexão com banco de dados
   include Util           # Inclusão do módulo de utilitários
 
+
   # Metodo inicializador da classe
   def initialize(db = nil)
     setup_logger            # Configura o logger para registrar informações e erros
@@ -117,9 +118,7 @@ class Services
   rescue TinyTds::Client::Timeout => e
     @logger.error "Erro ao fechar conexão do SQL Server da loja e/ou retaguarda: #{e.message}"  # Log de erro ao fechar
   end
-
   public
-
   # Metodo principal para sincronização de dados
   def datasync
     lojas_para_email = []  # Lista de lojas para envio de e-mail
@@ -128,20 +127,20 @@ class Services
 
     if verifica_horario?  # Verifica se está no horário permitido para execução
       unless verificacao_emails  # Verifica condições para envio de e-mails
-        # Obtém as filiais com servidor igual a 1
-        ips = FiliaisIp.where(servidor: 1).select(:ip, :filial, :cod_filial)
+        # Obtém as filiais com servidor igual a 1 e ordena por cod_filial
+        ips = FiliaisIp.where(servidor: 1).select(:ip, :filial, :cod_filial).order(:cod_filial)
         ips.each do |row|
           ip = row.IP
           filial = row.FILIAL
           cod_filial = row.COD_FILIAL
-
+          script = "SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{formatar_data}' AND CODIGO_FILIAL='#{formatar_codigo_filial(cod_filial)}'"
           # Conecta ao banco da loja
           client_loja = conectar_banco_server_loja(ip, cod_filial, filial)
 
           # Executa uma consulta no banco da loja para obter o valor total de vendas
-          executar_banco_server(client_loja, "select sum(valor_pago) from LOJA_VENDA where DATA_VENDA='#{formatar_data}'") do |linhas|
+          executar_banco_server(client_loja, script) do |linhas|
             linhas.each do |roww|
-              valor = converter_hash(roww)  # Extrai o valor do hash
+              valor = converter_hash_vazias(roww)  # Extrai o valor do hash
               if valor
                 @logger.info "valor na loja: #{formatar_valor(valor)} da filial #{filial} (#{formatar_codigo_filial(cod_filial)})"
                 lojas_valores << [formatar_valor(valor), cod_filial, filial, ip]  # Adiciona à lista de valores das lojas
@@ -154,14 +153,12 @@ class Services
           ensure
             fecha_conexao_server(client_loja)  # Fecha a conexão com a loja
           end
-
           # Conecta ao banco da retaguarda
           client_ret = conectar_banco_server_ret(filial, cod_filial)
-
           # Executa uma consulta no banco da retaguarda para obter o valor total de vendas
-          executar_banco_server(client_ret, "SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{formatar_data}' AND CODIGO_FILIAL='#{formatar_codigo_filial(cod_filial)}'") do |ret|
+          executar_banco_server(client_ret, script) do |ret|
             ret.each do |valor_ret|
-              valor = converter_hash(valor_ret)  # Extrai o valor do hash
+              valor = converter_hash_vazias(valor_ret)  # Extrai o valor do hash
               if valor
                 @logger.info "valor na retaguarda: #{formatar_valor(valor)} da filial #{filial} (#{formatar_codigo_filial(cod_filial)})"
                 ret_valores << [formatar_valor(valor), cod_filial]  # Adiciona à lista de valores da retaguarda
@@ -171,13 +168,12 @@ class Services
             end
           end
         end
-
         # Compara os valores das lojas com os da retaguarda e atualiza conforme necessário
         comparar_valores(lojas_valores, ret_valores).each do |valor_loja, valor_ret, cod_filial, filial, ip|
+          venda_travada(ip,cod_filial,filial)
           rodar_script_update(ip, filial, cod_filial)  # Executa os scripts de atualização no banco da loja
           lojas_para_email << ["#{filial} (#{formatar_codigo_filial(cod_filial)})", valor_loja, valor_ret || 0, valor_loja.to_f - (valor_ret || 0).to_f]
         end
-
         enviar_emails(lojas_para_email)  # Envia e-mails com os resultados da sincronização
       end
     end
@@ -190,7 +186,7 @@ class Services
     cliente = conectar_banco_server_loja(ip, cod_filial, filial)  # Conecta ao banco da loja
     unless cliente
       @logger.error "Não foi possível conectar à filial #{filial} (#{cod_filial})."  # Log de erro na conexão
-      add_list([filial, cod_filial])  # Adiciona à lista de erros
+      add_list([filial, formatar_codigo_filial(cod_filial)])  # Adiciona à lista de erros
       return
     end
 
