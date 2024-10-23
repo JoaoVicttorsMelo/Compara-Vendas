@@ -1,3 +1,5 @@
 config.yml
 execute.bat
 log/
+.idea/
+Gemfile.lock
