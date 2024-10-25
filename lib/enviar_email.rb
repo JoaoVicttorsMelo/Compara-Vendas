@@ -13,7 +13,7 @@ module EnviarEmail
   # @param informacao [Array, String, nil] informações adicionais para serem incluídas em uma tabela HTML
   # @param caminho_arquivo_anexo [String, nil] caminho para um arquivo a ser anexado ao e-mail
   # @param info_opcional [String, nil] informações opcionais adicionais para serem incluídas no corpo do e-mail
-  def enviar_email(titulo:, corpo:, corpo2: nil, informacao: nil, caminho_arquivo_anexo: nil, info_opcional: nil, incluir_style: true)
+  def enviar_email(titulo:, corpo:, corpo2: nil, informacao: nil, caminho_arquivo_anexo: nil, info_opcional: nil, incluir_style: true, validacao: 1)
     # Define o caminho para o arquivo de configuração 'config.yml' localizado na mesma pasta do módulo
     config_path = File.join(__dir__, 'config.yml')
     # Carrega as configurações do arquivo YAML
@@ -53,8 +53,12 @@ module EnviarEmail
     # Criação do e-mail com estilo e prioridade definidos
     mail = Mail.new do
       from    sender_email                             # Define o remetente
-      to      receiver_emails.join(', ')              # Define os destinatários principais
-      bcc     bcc_emails.join(', ')                   # Define os destinatários de CCO
+      to      receiver_emails.join(', ') # Define os destinatários principais
+      if validacao == 0
+        if bcc_emails
+          bcc     bcc_emails.join(', ')                   # Define os destinatários de CCO
+        end
+      end
       subject titulo                                  # Define o assunto do e-mail
       content_type 'text/html; charset=UTF-8'         # Define o tipo de conteúdo como HTML com codificação UTF-8
 
