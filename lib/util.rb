@@ -12,24 +12,21 @@ module Util
 
   # Verifica se o horário atual está dentro do horário de funcionamento permitido
   def verifica_horario?
-    horario = Time.now
-    data = Date.today
-    hora_minuto_atual = horario.strftime("%H:%M")
+    horario = Time.now       # Obtém o horário atual
+    data = Date.today        # Obtém a data atual
 
-    if hora_minuto_atual == "21:50" || hora_minuto_atual == "22:40"
-      true  # Permite a execução nos horários especiais
-    elsif data.sunday?
-      if horario.hour >= 13 && horario.hour <= 21
+    if data.sunday?          # Se for domingo
+      if horario.hour >= 13 && horario.hour <= 21  # Horário permitido: 13h às 21h
         true
       else
-        Services.logger.info("Fora de horário de funcionamento")
+        puts "Fora de horário de funcionamento"   # Mensagem informando fora do horário
         false
       end
     else
-      if horario.hour >= 8 && horario.hour <= 23
+      if horario.hour >= 8 && horario.hour <= 23    # Horário permitido: 8h às 23h nos demais dias
         true
       else
-        Services.logger.info("Fora de horário de funcionamento")
+        puts "Fora de horário de funcionamento"     # Mensagem informando fora do horário
         false
       end
     end
@@ -75,15 +72,8 @@ module Util
 
   # Formata a data para o formato "YYYYMMDD", considerando o dia anterior
   def formatar_data
-    horario = Time.now
-    hora_minuto_atual = horario.strftime("%H:%M")
-
-    if hora_minuto_atual == "21:40" || hora_minuto_atual == "22:50"
-      data = Date.today
-    else
-      data = Date.today - 1
-    end
-    data.strftime("%Y%m%d")
+    data = Date.today - 1  # Obtém a data do dia anterior
+    data.strftime("%Y%m%d") # Formata a data no formato "YYYYMMDD"
   end
 
   # Compara os valores das lojas com os valores da retaguarda
@@ -121,8 +111,7 @@ module Util
 
   def enviar_email_diferencas(anexo, resultado_consulta)
     info_opcional = if resultado_consulta.any?
-                      "<p class='big-bold'>Segue as lojas que não foram possíveis de fazer a verificação automática:</p>
-<br><h1>Possíveis Diferenças nas Vendas!</h1>
+                      "<h1>Possíveis Diferenças nas Vendas!</h1>
     <p class='big-bold'>As lojas listadas acima não puderam ser conectadas para verificação automática. Essas diferenças serão validadas somente após: 'Abertura das lojas e reativação dos terminais, especialmente se estiverem em fusos horários diferentes.
 '</p>"
                     else
@@ -132,6 +121,7 @@ module Util
     enviar_email(
       titulo: "Datasync: Lojas com diferenças",
       corpo: "Lojas com diferenças:<br>",
+      corpo2: "<p class='big-bold'>Segue as lojas que não foram possíveis de fazer a verificação automática:</p>",
       informacao: resultado_consulta,
       caminho_arquivo_anexo: anexo,
       info_opcional: info_opcional
@@ -154,8 +144,7 @@ module Util
         enviar_email(
           titulo: "Datasync: Lojas sem diferenças",
           corpo: 'Valores Lojas X Retaguarda estão corretos:<br>',
-          informacao: "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>",
-          validacao: 0
+          informacao: "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>"
         )
       end
     end
@@ -220,6 +209,8 @@ module Util
     end
   end
 
+
+
   def enviar_email_vendas_travadas(conteudo_email)
     enviar_email(
       titulo: 'Loja com venda travada',
@@ -246,38 +237,30 @@ module Util
 
   # Verifica se os e-mails já foram enviados para a data atual ou insere um novo registro
   def verificacao_emails(validacao = 0)
-    ultimo_email = UltimoEmail.order(data_envio_concluido: :desc).first
-    data_atual = formatar_data
-    horario = Time.now
-    hora_minuto_atual = horario.strftime("%H:%M")
-
-    if hora_minuto_atual >= "20:40" && hora_minuto_atual <= "22:50"
-      # Às 22:40, não impede a execução e não insere no banco
-      return false
-    end
+    ultimo_email = UltimoEmail.order(data_envio_concluido: :desc).first  # Obtém o último registro de envio de e-mail
+    data_atual = formatar_data  # Formata a data atual
 
     if validacao == 0 && ultimo_email&.data_envio_concluido == data_atual
-      Services.logger.info("Já existe um registro para a data atual: #{data_atual}. Cancelando o envio.")
+      @logger.info("Já existe um registro para a data atual: #{data_atual}. Cancelando o envio.")  # Log informando que o e-mail já foi enviado
       return true
     end
 
     if validacao == 1
       begin
         if ultimo_email.nil? || ultimo_email.data_envio_concluido < data_atual
-          return inserir_novo_registro(data_atual)
+          return inserir_novo_registro(data_atual)  # Insere um novo registro se não existir ou se for uma nova data
         else
-          Services.logger.error("#{data_atual} já foi inserido na coluna 'data_envio_concluido', portanto não será salvo novamente")
+          @logger.error("#{data_atual} já foi inserido na coluna 'data_envio_concluido', portanto não será salvo novamente")  # Log de erro
           return false
         end
       rescue ActiveRecord::RecordNotUnique
-        Services.logger.error("#{data_atual} já foi inserido na coluna 'data_envio_concluido', portanto não será salvo novamente")
+        @logger.error("#{data_atual} já foi inserido na coluna 'data_envio_concluido', portanto não será salvo novamente")  # Log de erro de unicidade
         false
       rescue StandardError => e
-        Services.logger.error("Erro inesperado na função verificacao_emails: #{e.message}")
+        @logger.error("Erro inesperado na função verificacao_emails: #{e.message}")  # Log de erro genérico
         false
       end
     end
   end
-
 
 end

@@ -1,4 +1,9 @@
 config.yml
 execute.bat
 log/
+<<<<<<< HEAD
 relatorio_venda.xlsx
+=======
+.idea/
+Gemfile.lock
+>>>>>>> c6de7e82027679047fdc7fe51a67938d1ee4fd07

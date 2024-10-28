@@ -23,11 +23,8 @@ class Services
     abrir_conexao_banco_lite  # Abre a conexão com o banco de dados SQLite
   end
 
-  def self.logger
-    @logger
-  end
-
   private
+
   # Configura o logger para registrar logs no arquivo especificado
   def setup_logger
     project_root = File.expand_path(File.join(__dir__, '..'))  # Define o diretório raiz do projeto
@@ -37,7 +34,7 @@ class Services
     ensure_log_file_exists  # Garante que o arquivo de log exista e seja gravável
 
     shift_age = 5                            # Define a quantidade de arquivos de log antigos a serem mantidos
-    shift_size = converter_mb_para_byte(6)  # Define o tamanho máximo do arquivo de log em bytes
+    shift_size = converter_mb_para_byte(10)  # Define o tamanho máximo do arquivo de log em bytes
 
     @logger = Logger.new(@log_file, shift_age, shift_size)  # Inicializa o logger com rotação de arquivos
     @logger.level = Logger::INFO                           # Define o nível de log para INFO
@@ -129,89 +126,61 @@ class Services
     ret_valores = []       # Lista de valores da retaguarda
 
     if verifica_horario?  # Verifica se está no horário permitido para execução
-      horario = Time.now
-      hora_minuto_atual = horario.strftime("%H:%M")
+      unless verificacao_emails  # Verifica condições para envio de e-mails
+        # Obtém as filiais com servidor igual a 1 e ordena por cod_filial
+        ips = FiliaisIp.where(servidor: 1).select(:ip, :filial, :cod_filial).order(:cod_filial)
+        ips.each do |row|
+          ip = row.IP
+          filial = row.FILIAL
+          cod_filial = row.COD_FILIAL
+          script = "SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{formatar_data}' AND CODIGO_FILIAL='#{formatar_codigo_filial(cod_filial)}'"
+          # Conecta ao banco da loja
+          client_loja = conectar_banco_server_loja(ip, cod_filial, filial)
 
-      # Definir a data de processamento
-      if (hora_minuto_atual >= "21:50" && hora_minuto_atual <"22:00") || (hora_minuto_atual == "22:40" && hora_minuto_atual <"23:05")
-        data_de_processamento = Date.today.strftime("%Y%m%d")
-      else
-        data_de_processamento = (Date.today - 1).strftime("%Y%m%d")
-      end
-
-      # Verificar se já foi processado (exceto às 22:40)
-      unless hora_minuto_atual == "22:40" || !verificacao_emails
-        @logger.info("Processamento já realizado para a data #{data_de_processamento}.")
-        return
-      end
-
-      # Obtém as filiais com servidor igual a 1 e ordena por cod_filial
-      ips = FiliaisIp.where("servidor = ?", 1).select(:ip, :filial, :cod_filial).order(:cod_filial)
-
-      ips.each do |row|
-        ip = row.IP
-        filial = row.FILIAL
-        cod_filial = row.COD_FILIAL
-
-        script = "SELECT SUM(VALOR_PAGO) FROM LOJA_VENDA WHERE DATA_VENDA='#{data_de_processamento}' AND CODIGO_FILIAL='#{formatar_codigo_filial(cod_filial)}'"
-
-        # Conecta ao banco da loja
-        client_loja = conectar_banco_server_loja(ip, cod_filial, filial)
-
-        # Executa uma consulta no banco da loja para obter o valor total de vendas
-        begin
+          # Executa uma consulta no banco da loja para obter o valor total de vendas
           executar_banco_server(client_loja, script) do |linhas|
             linhas.each do |roww|
               valor = converter_hash_vazias(roww)  # Extrai o valor do hash
               if valor
-                @logger.info "Valor na loja: #{formatar_valor(valor)} da filial #{filial} (#{formatar_codigo_filial(cod_filial)})"
+                @logger.info "valor na loja: #{formatar_valor(valor)} da filial #{filial} (#{formatar_codigo_filial(cod_filial)})"
                 lojas_valores << [formatar_valor(valor), cod_filial, filial, ip]  # Adiciona à lista de valores das lojas
               else
-                @logger.info "Filial #{filial} (#{cod_filial}) sem venda no banco da loja"
+                @logger.info "Filial #{filial} (#{cod_filial}) sem venda no banco da loja"  # Log de ausência de vendas
               end
             end
+          rescue TinyTds::Error, SQLException::Exception
+            add_list([filial, formatar_codigo_filial(cod_filial)])  # Adiciona à lista de erros em caso de falha
+          ensure
+            fecha_conexao_server(client_loja)  # Fecha a conexão com a loja
           end
-        rescue TinyTds::Error, SQLException::Exception => e
-          add_list([filial, formatar_codigo_filial(cod_filial)])
-          @logger.error "Erro ao executar consulta na loja #{filial}: #{e.message}"
-        ensure
-          fecha_conexao_server(client_loja)
-        end
-
-        # Conecta ao banco da retaguarda
-        client_ret = conectar_banco_server_ret(filial, cod_filial)
-
-        # Executa uma consulta no banco da retaguarda para obter o valor total de vendas
-        begin
+          # Conecta ao banco da retaguarda
+          client_ret = conectar_banco_server_ret(filial, cod_filial)
+          # Executa uma consulta no banco da retaguarda para obter o valor total de vendas
           executar_banco_server(client_ret, script) do |ret|
             ret.each do |valor_ret|
-              valor = converter_hash_vazias(valor_ret)
+              valor = converter_hash_vazias(valor_ret)  # Extrai o valor do hash
               if valor
-                @logger.info "Valor na retaguarda: #{formatar_valor(valor)} da filial #{filial} (#{formatar_codigo_filial(cod_filial)})"
+                @logger.info "valor na retaguarda: #{formatar_valor(valor)} da filial #{filial} (#{formatar_codigo_filial(cod_filial)})"
                 ret_valores << [formatar_valor(valor), cod_filial]  # Adiciona à lista de valores da retaguarda
               else
-                @logger.info "Filial #{filial} (#{cod_filial}) sem venda no banco da retaguarda"
+                @logger.info "Filial #{filial} (#{cod_filial}) sem venda no banco da retaguarda"  # Log de ausência de vendas
               end
             end
           end
-        rescue TinyTds::Error, SQLException::Exception => e
-          @logger.error "Erro ao executar consulta na retaguarda para a filial #{filial}: #{e.message}"
-        ensure
-          fecha_conexao_server(client_ret)
         end
-      end
-
-      # Compara os valores das lojas com os da retaguarda e atualiza conforme necessário
+        # Compara os valores das lojas com os da retaguarda e atualiza conforme necessário
         comparar_valores(lojas_valores, ret_valores).each do |valor_loja, valor_ret, cod_filial, filial, ip|
-        venda_travada(ip, cod_filial, filial)
-        rodar_script_update(ip, filial, cod_filial)  # Executa os scripts de atualização no banco da loja
-        lojas_para_email << ["#{filial} (#{formatar_codigo_filial(cod_filial)})", valor_loja, valor_ret || 0, valor_loja.to_f - (valor_ret || 0).to_f]
+          venda_travada(ip,cod_filial,filial)
+          rodar_script_update(ip, filial, cod_filial)  # Executa os scripts de atualização no banco da loja
+          lojas_para_email << ["#{filial} (#{formatar_codigo_filial(cod_filial)})", valor_loja, valor_ret || 0, valor_loja.to_f - (valor_ret || 0).to_f]
+        end
+        enviar_emails(lojas_para_email)  # Envia e-mails com os resultados da sincronização
       end
-      enviar_emails(lojas_para_email)  # Envia e-mails com os resultados da sincronização
     end
   end
 
   public
+
   # Executa scripts de atualização no banco da loja
   def rodar_script_update(ip, filial, cod_filial)
     cliente = conectar_banco_server_loja(ip, cod_filial, filial)  # Conecta ao banco da loja
