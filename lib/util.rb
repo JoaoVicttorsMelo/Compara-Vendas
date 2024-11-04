@@ -23,7 +23,7 @@ module Util
         false
       end
     else
-      if horario.hour >= 8 && horario.hour <= 23    # Horário permitido: 8h às 23h nos demais dias
+      if horario.hour >= 8 && horario.hour <= 20    # Horário permitido: 8h às 23h nos demais dias
         true
       else
         puts "Fora de horário de funcionamento"     # Mensagem informando fora do horário
@@ -144,7 +144,8 @@ module Util
         enviar_email(
           titulo: "Datasync: Lojas sem diferenças",
           corpo: 'Valores Lojas X Retaguarda estão corretos:<br>',
-          informacao: "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>"
+          informacao: "<p class='big-bold'>Nenhuma loja deu erro na conexão!</p>",
+          validacao: 0
         )
       end
     end
